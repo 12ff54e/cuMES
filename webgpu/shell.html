@@ -3,177 +3,281 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
   <title>cuMES · Magnetic equilibrium in your browser</title>
+  <script>
+    // Apply the saved theme before painting, including when storage is unavailable.
+    (() => {
+      const key = 'cumes.theme.v1', root = document.documentElement;
+      function apply(theme) {
+        root.dataset.theme = theme === 'dark' ? 'dark' : 'light';
+        document.getElementById('theme-toggle')?.setAttribute('aria-pressed', String(root.dataset.theme === 'dark'));
+        document.dispatchEvent(new Event('cumes-theme-change'));
+      }
+      let saved;
+      try { saved = localStorage.getItem(key); } catch {}
+      apply(saved);
+      document.addEventListener('DOMContentLoaded', () => {
+        const toggle = document.getElementById('theme-toggle');
+        toggle.setAttribute('aria-pressed', String(root.dataset.theme === 'dark'));
+        toggle.addEventListener('click', () => {
+          apply(root.dataset.theme === 'dark' ? 'light' : 'dark');
+          try { localStorage.setItem(key, root.dataset.theme); } catch {}
+        });
+      });
+      addEventListener('storage', event => {
+        if (event.key === key || event.key === null) apply(event.newValue);
+      });
+    })();
+  </script>
   <style>
-    :root { --ink:#f5f7fb; --muted:#9aa9bb; --panel:#121b28; --line:#27374b;
-      --cyan:#55d6d0; --blue:#5f8fff; --orange:#ffb65d; --danger:#ff6f75; --bg:#07101a; }
+    /* Match the cumes-materials slides: Biolinum headings, Libertine prose,
+       warm paper, teal and terracotta. Fonts use the same pinned OFL releases. */
+    @font-face { font-family:'Linux Biolinum'; font-style:normal; font-weight:400; font-display:swap;
+      src:url('https://cdn.jsdelivr.net/npm/@typopro/web-linux-biolinum@3.7.5/TypoPRO-LinuxBiolinum-Regular.ttf') format('truetype'); }
+    @font-face { font-family:'Linux Libertine'; font-style:normal; font-weight:400; font-display:swap;
+      src:url('https://cdn.jsdelivr.net/npm/@typopro/web-linux-libertine@3.7.5/TypoPRO-LinuxLibertine-Regular.ttf') format('truetype'); }
+    @font-face { font-family:'Fira Code'; font-style:normal; font-weight:300 700; font-display:swap;
+      src:url('https://cdn.jsdelivr.net/npm/firacode@6.2.0/distr/woff2/FiraCode-VF.woff2') format('woff2'); }
+    :root { color-scheme:light;
+      --bg:#faf9f6; --ink:#202b30; --muted:#626e73; --panel:#edf2ec; --surface:#ffffff;
+      --line:#dce0db; --grid:#e1e4df; --cyan:#007f82; --blue:#536d9c; --orange:#bb6438;
+      --danger:#ae4d50; --restart:#b04c78; --coil-color:#a65338; --on-accent:#ffffff;
+      --accent-soft:#eaf0eb; --orange-soft:#f6eee7;
+      --sans:'Linux Biolinum','Segoe UI',sans-serif;
+      --serif:'Linux Libertine',Georgia,'Times New Roman',serif;
+      --mono:'Fira Code','SFMono-Regular',Consolas,monospace; }
+    :root[data-theme=dark] { color-scheme:dark;
+      --bg:#383838; --ink:#f0eee9; --muted:#c3c4c0; --panel:#414141; --surface:#3c3c3c;
+      --line:#5c5c5c; --grid:#505050; --cyan:#79c9c7; --blue:#a6bce3; --orange:#edab81;
+      --danger:#efa0a1; --restart:#ed88b8; --coil-color:#edab81; --on-accent:#202b30;
+      --accent-soft:#3d4848; --orange-soft:#49413c; }
     * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; color:var(--ink); background:
-      radial-gradient(circle at 76% -10%,#17365a 0,transparent 38rem),
-      radial-gradient(circle at 8% 100%,#103837 0,transparent 32rem),var(--bg);
-      font:15px/1.5 Inter,ui-sans-serif,system-ui,sans-serif; }
-    button,input { font:inherit; } a { color:#9cb9ff; }
-    .page { width:min(1440px,calc(100% - 40px)); margin:auto; padding:24px 0 40px; }
-    header { display:flex; align-items:center; justify-content:space-between; gap:24px; margin-bottom:22px; }
-    .brand { display:flex; align-items:center; gap:13px; }
-    .mark { width:38px; height:38px; border:1px solid #62ddd4; border-radius:50%;
-      display:grid; place-items:center; box-shadow:inset 0 0 18px #55d6d033; }
-    .mark::after { content:''; width:18px; height:8px; border:2px solid var(--cyan); border-radius:50%; }
-    h1 { font-size:18px; margin:0; letter-spacing:.02em; }
-    .subtitle { color:var(--muted); font-size:12px; }
-    .site-header { padding-bottom:0; margin-bottom:0; }
-    nav { display:flex; flex-wrap:wrap; gap:6px; font-size:13px; }
-    nav a { color:var(--muted); text-decoration:none; padding:8px 12px; border-radius:8px; }
-    nav a:hover { color:var(--ink); background:#ffffff08; }
-    nav a[aria-current=page] { color:var(--cyan); background:#55d6d014; }
-    nav a:focus-visible { outline:2px solid var(--cyan); outline-offset:2px; }
-    .workspace { display:grid; grid-template-columns:minmax(340px,.82fr) minmax(500px,1.3fr); gap:18px; }
-    .panel { border:1px solid var(--line); border-radius:16px; background:#101a27e8;
-      box-shadow:0 18px 60px #0005; overflow:hidden; }
-    .panel-head { display:flex; align-items:center; justify-content:space-between; padding:17px 20px;
+    body { margin:0; min-height:100vh; color:var(--ink); background:var(--bg); font:16px/1.5 var(--sans); }
+    button,input,select,textarea { font:inherit; }
+    button,input[type=range],input[type=checkbox] { accent-color:var(--cyan); }
+    a { color:var(--cyan); text-underline-offset:3px; }
+    :focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
+    button:disabled { opacity:.55; cursor:not-allowed; }
+    .page { width:min(1440px,calc(100% - 80px)); margin:auto; padding:28px 0 36px; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:24px; }
+    .brand { display:flex; align-items:center; gap:14px; }
+    .mark { width:42px; height:42px; border:1px solid var(--cyan); border-radius:50%; display:grid; place-items:center; }
+    .mark::after { content:''; width:22px; height:10px; border:1px solid var(--cyan); border-radius:50%; transform:rotate(-25deg); }
+    h1,h2,h3 { font-weight:400; }
+    h1 { font-size:30px; margin:0; letter-spacing:-.025em; line-height:1.1; }
+    .subtitle { color:var(--muted); font-size:14px; }
+    .brand .subtitle { margin-top:4px; font:16px/1.4 var(--serif); }
+    .brand a { color:inherit; text-decoration:none; }
+    .site-header { border-bottom:1px solid var(--line); padding-bottom:24px; }
+    .header-actions { display:flex; align-items:center; gap:24px; }
+    nav { display:flex; flex-wrap:wrap; gap:18px; font-size:16px; }
+    nav a { color:var(--muted); text-decoration:none; padding:10px 0; border-bottom:2px solid transparent; }
+    nav a:hover { color:var(--cyan); }
+    nav a[aria-current=page] { color:var(--cyan); border-bottom-color:var(--cyan); }
+    .theme-toggle { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:40px; height:40px; padding:0;
+      border:1px solid var(--line); border-radius:4px; background:transparent; color:var(--ink); font-size:20px; cursor:pointer; }
+    .theme-toggle:hover { background:var(--panel); }
+    .theme-toggle[aria-pressed=true] { color:var(--cyan); }
+    .workspace { display:grid; grid-template-columns:minmax(0,.82fr) minmax(0,1.3fr); gap:24px; align-items:start; }
+    .panel { min-width:0; border:1px solid var(--line); border-radius:5px; background:var(--bg); overflow:hidden; }
+    .panel-head { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:18px 22px;
       border-bottom:1px solid var(--line); }
-    .panel-head h2 { margin:0; font-size:14px; letter-spacing:.06em; text-transform:uppercase; }
-    .mode-switch { display:flex; padding:3px; border:1px solid var(--line); border-radius:9px; background:#08111b; }
-    .mode-switch button { border:0; border-radius:6px; padding:4px 10px; color:var(--muted); background:transparent;
-      font-size:11px; cursor:pointer; }
-    .mode-switch button.active { color:#071214; background:var(--cyan); font-weight:700; }
-    .tag { color:var(--cyan); background:#55d6d014; border:1px solid #55d6d044;
-      border-radius:99px; padding:3px 9px; font-size:11px; }
-    .plot-wrap { position:relative; min-height:480px; padding:16px; }
-    svg,.equilibrium-3d { display:block; width:100%; border-radius:10px;
-      background:linear-gradient(145deg,#0b1521,#0a121c); touch-action:none; }
-    svg { height:100%; min-height:448px; }
-    .equilibrium-3d { height:448px; cursor:grab; background:radial-gradient(ellipse at 52% 44%,#13263a,#07101a); }
+    .panel-head h2 { margin:0; font-size:23px; letter-spacing:-.02em; }
+    .mode-switch { display:flex; flex-wrap:wrap; padding:3px; gap:2px; border:1px solid var(--line); border-radius:4px; background:var(--panel); }
+    .mode-switch button { border:0; border-radius:2px; min-height:32px; padding:5px 11px; color:var(--muted); background:transparent;
+      font-size:14px; cursor:pointer; }
+    .mode-switch button:hover:not(:disabled) { color:var(--cyan); }
+    .mode-switch button.active { color:var(--on-accent); background:var(--cyan); }
+    .mode-switch button.active:hover:not(:disabled) { color:var(--on-accent); }
+    .tag { color:var(--cyan); background:var(--accent-soft); border:1px solid var(--line);
+      border-radius:3px; padding:3px 8px; font-size:13px; }
+    .plot-wrap { position:relative; min-height:460px; padding:16px; }
+    svg,.equilibrium-3d { display:block; width:100%; border-radius:2px; background:var(--bg); touch-action:none; }
+    svg { height:100%; min-height:428px; }
+    /* Keep the empty/2D result viewport the same size as the 3D canvas. */
+    .results svg,.equilibrium-3d { height:428px; }
+    .equilibrium-3d { cursor:grab; }
     .equilibrium-3d:active { cursor:grabbing; }
     .equilibrium-3d[hidden] + .orbit-hint { display:none; }
     .orbit-view { position:relative; }
     .orbit-view .orbit-hint { left:14px; bottom:11px; }
     .orbit-view.orbit-inset { position:absolute; top:26px; right:26px; width:clamp(140px,32%,210px);
-      border:1px solid var(--line); border-radius:10px; overflow:hidden; box-shadow:0 6px 24px #0006; }
+      border:1px solid var(--line); border-radius:4px; overflow:hidden; background:var(--bg); }
     .orbit-inset .equilibrium-3d { height:auto; aspect-ratio:4/3; border-radius:0; }
     .orbit-inset .orbit-hint { display:none; }
-    .orbit-inset [data-renderer-error] + .orbit-hint { display:block; left:8px; right:8px; bottom:6px; font-size:10px; }
-    .inset-angle { position:absolute; top:7px; right:8px; color:var(--orange); background:#07101acc;
-      border-radius:4px; padding:2px 5px; font-size:11px; font-variant-numeric:tabular-nums; pointer-events:none; }
+    .orbit-inset [data-renderer-error] + .orbit-hint { display:block; left:8px; right:8px; bottom:6px; font-size:12px; }
+    .inset-angle { position:absolute; top:7px; right:8px; color:var(--orange); background:var(--bg);
+      border-radius:2px; padding:2px 5px; font-size:12px; font-variant-numeric:tabular-nums; pointer-events:none; }
     .result-head-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:10px; }
-    .result-head-actions > button[aria-pressed="true"] { color:#ff9d72; border-color:#ab6242; background:#ff9d7212; }
-    #coil-view-note { margin:0; padding:8px 20px; }
-    .axis-label { fill:#7f90a6; font-size:12px; }
-    .grid-line { stroke:#29394c; stroke-width:1; }
-    .boundary { fill:#55d6d012; stroke:var(--cyan); stroke-width:2.5; filter:drop-shadow(0 0 5px #55d6d055); }
-    .contour-target { fill:#ffb65d0b; stroke:var(--orange); stroke-width:2; stroke-dasharray:7 5; }
-    .handle { fill:#0b1521; stroke:#b3fff9; stroke-width:2; cursor:grab; }
+    .result-head-actions > button[aria-pressed=true] { color:var(--orange); border-color:var(--orange); background:var(--orange-soft); }
+    #coil-view-note { margin:0; padding:8px 22px; }
+    .axis-label { fill:var(--muted); font-size:20px; }
+    .results .axis-label { font-size:16px; }
+    .grid-line { stroke:var(--grid); stroke-width:1; }
+    .boundary { fill:var(--accent-soft); stroke:var(--cyan); stroke-width:2.5; }
+    .contour-target { fill:none; stroke:var(--orange); stroke-width:2; stroke-dasharray:7 5; }
+    .flux-surface { stroke:var(--cyan); }
+    .handle { fill:var(--bg); stroke:var(--cyan); stroke-width:2; cursor:grab; }
     .handle:hover,.handle.active { fill:var(--cyan); }
-    .hint { position:absolute; left:30px; bottom:27px; color:var(--muted); font-size:12px;
-      background:#07101acc; border-radius:6px; padding:5px 8px; pointer-events:none; }
-    .controls { border-top:1px solid var(--line); padding:16px 20px 19px; }
-    .coefficient-columns { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
-    .harmonic-group h3 { margin:0 0 10px; color:#d9e3ef; font-size:12px; font-weight:650; }
-    .harmonic-group h3 span { display:block; color:#718398; font:10px/1.4 ui-monospace,SFMono-Regular,monospace; font-weight:400; }
-    .harmonic-controls { display:grid; gap:8px; }
-    label { display:grid; grid-template-columns:1fr auto; gap:3px 10px; color:#c7d1df; font-size:12px; }
+    .hint { position:absolute; left:28px; right:28px; bottom:25px; width:fit-content; max-width:calc(100% - 56px);
+      color:var(--muted); font-size:13px; background:var(--bg); border-radius:2px; padding:4px 7px; pointer-events:none; }
+    .controls { border-top:1px solid var(--line); padding:20px 22px; }
+    .coefficient-columns { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+    .harmonic-group h3 { margin:0 0 14px; color:var(--ink); font-size:18px; }
+    .harmonic-group h3 span { display:block; color:var(--muted); font:11px/1.6 var(--mono); }
+    .harmonic-controls { display:grid; gap:12px; }
+    label { display:grid; grid-template-columns:1fr auto; gap:4px 10px; color:var(--ink); font-size:14px; }
     label output { color:var(--cyan); font-variant-numeric:tabular-nums; }
-    input[type=range] { grid-column:1/-1; width:100%; accent-color:var(--cyan); }
-    .pressure-control { margin-top:14px; max-width:calc(50% - 10px); }
-    .formula { margin-top:13px; color:#75869a; font:11px/1.6 ui-monospace,SFMono-Regular,monospace; }
-    .contour-editor { min-height:178px; display:grid; align-content:start; gap:12px; }
-    .contour-editor p { margin:0; color:#aebccc; font-size:12px; }
-    .contour-legend { display:flex; flex-wrap:wrap; gap:13px; color:#8293a8; font-size:11px; }
+    input[type=range] { grid-column:1/-1; width:100%; min-height:22px; margin:0; }
+    .pressure-control { margin-top:20px; max-width:calc(50% - 12px); }
+    .formula { margin-top:16px; color:var(--muted); font:12px/1.7 var(--mono); overflow-wrap:anywhere; }
+    .contour-editor { min-height:178px; display:grid; align-content:start; gap:14px; }
+    .contour-editor p { margin:0; color:var(--muted); font:16px/1.5 var(--serif); }
+    .contour-legend { display:flex; flex-wrap:wrap; gap:13px; color:var(--muted); font-size:13px; }
     .swatch { display:inline-block; width:18px; margin-right:5px; vertical-align:middle; border-top:2px solid var(--cyan); }
     .swatch.target { border-color:var(--orange); border-top-style:dashed; }
     .fit-error { color:var(--cyan); font-variant-numeric:tabular-nums; }
-    .editor .plot-wrap { min-height:360px; } .editor svg { min-height:328px; }
-    .actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:17px; }
-    .solver-toolbar { position:sticky; top:12px; z-index:10; display:flex; flex-wrap:wrap;
-      align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; margin-bottom:18px;
-      border:1px solid var(--line); border-radius:12px; background:#101a27f5; box-shadow:0 8px 24px #0003; }
+    .editor .plot-wrap { min-height:350px; } .editor svg { min-height:318px; }
+    .actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:20px; }
+    .solver-toolbar { position:sticky; top:0; z-index:10; display:flex; flex-wrap:wrap;
+      align-items:center; justify-content:space-between; gap:12px; padding:14px 0; margin-bottom:24px;
+      border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:var(--bg); }
     .solver-toolbar .actions { margin:0; }
-    .solver-speed { color:var(--muted); font-size:13px; white-space:nowrap; }
+    .solver-speed { color:var(--muted); font-size:14px; white-space:nowrap; }
     .solver-speed output { margin-right:.35em; color:var(--cyan); font-variant-numeric:tabular-nums; }
-    .primary { border:0; border-radius:9px; color:#061313; background:linear-gradient(135deg,#69e7dc,#64a5ff);
-      padding:10px 18px; font-weight:700; cursor:pointer; box-shadow:0 8px 24px #55d6d028; }
-    .primary:hover { filter:brightness(1.08); } .primary:disabled { filter:grayscale(.7); cursor:wait; opacity:.7; }
-    .secondary { border:1px solid var(--line); border-radius:9px; color:var(--muted); background:transparent;
+    .primary { border:1px solid var(--cyan); border-radius:4px; color:var(--on-accent); background:var(--cyan);
+      padding:10px 22px; cursor:pointer; }
+    .primary:hover:not(:disabled) { filter:brightness(.93); }
+    .primary:disabled { cursor:wait; }
+    .secondary { border:1px solid var(--line); border-radius:4px; color:var(--ink); background:transparent;
       padding:9px 13px; cursor:pointer; text-decoration:none; }
+    .secondary:hover:not(:disabled) { color:var(--cyan); border-color:var(--cyan); background:var(--accent-soft); }
     .results { display:grid; grid-template-rows:auto 1fr auto; }
-    .result-column { display:grid; grid-template-rows:auto auto; align-content:start; gap:18px; min-width:0; }
+    .result-column { display:grid; grid-template-rows:auto auto; align-content:start; gap:24px; min-width:0; }
     .residual-panel { margin:0; }
-    .residual-panel .panel-head { flex-wrap:wrap; gap:10px; }
-    .residual-panel .panel-head h2 { font-size:14px; }
-    .residual-legend { display:flex; flex-wrap:wrap; gap:12px; font:11px ui-monospace,monospace; }
+    .residual-legend { display:flex; flex-wrap:wrap; gap:12px; font:11px var(--mono); }
     .residual-legend span { white-space:nowrap; }
     .residual-legend output { margin-left:5px; font-variant-numeric:tabular-nums; }
     .residual-legend span::before { content:''; display:inline-block; width:15px; margin-right:5px; border-top:2px solid; vertical-align:middle; }
-    .residual-legend span:nth-child(1) { color:#55d6d0; }
-    .residual-legend span:nth-child(2) { color:#7ca4ff; }
+    .residual-legend span:nth-child(1) { color:var(--cyan); }
+    .residual-legend span:nth-child(2) { color:var(--blue); }
     .residual-legend span:nth-child(2)::before { border-top-style:dashed; }
-    .residual-legend span:nth-child(3) { color:#ffb65d; }
+    .residual-legend span:nth-child(3) { color:var(--orange); }
     .residual-legend span:nth-child(3)::before { border-top-style:dotted; }
     .residual-canvas { display:block; width:100%; height:250px; }
-    .residual-caption { margin:0; padding:8px 18px 14px; color:var(--muted); font-size:11px; }
-    .result-empty { position:absolute; inset:0; display:grid; place-content:center; text-align:center;
-      color:var(--muted); pointer-events:none; }
-    .result-empty strong { color:#dce5f0; font-size:17px; margin-bottom:5px; }
-    .status-strip { display:grid; grid-template-columns:1.2fr .8fr .8fr; border-top:1px solid var(--line); }
-    .metric { padding:15px 18px; border-right:1px solid var(--line); min-width:0; }
-    .metric:last-child { border:0; } .metric small { display:block; color:var(--muted); font-size:10px;
-      letter-spacing:.08em; text-transform:uppercase; }
-    .metric span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-      font-variant-numeric:tabular-nums; margin-top:3px; }
-    .status-dot { display:inline-block; width:8px; height:8px; margin-right:7px; border-radius:50%; background:#7c8998; }
-    body[data-cumes-webgpu=pass] .status-dot { background:var(--cyan); box-shadow:0 0 9px var(--cyan); }
+    .residual-caption { margin:0; padding:10px 22px 18px; color:var(--muted); font-size:13px; }
+    .result-empty { position:absolute; inset:0; display:grid; place-content:center; padding:24px; text-align:center;
+      color:var(--muted); pointer-events:none; font:18px/1.5 var(--serif); }
+    .result-empty strong { color:var(--ink); font:28px/1.3 var(--sans); margin-bottom:8px; }
+    .status-strip { display:grid; grid-template-columns:1.2fr .8fr .8fr; border-top:1px solid var(--line); background:var(--panel); }
+    .metric { padding:16px 22px; border-right:1px solid var(--line); min-width:0; }
+    .metric:last-child { border:0; }
+    .metric small { display:block; color:var(--muted); font-size:12px; letter-spacing:.06em; text-transform:uppercase; }
+    .metric span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-variant-numeric:tabular-nums; margin-top:5px; }
+    .metric b { font-weight:400; }
+    .status-dot { display:inline-block; width:7px; height:7px; margin-right:7px; border-radius:50%; background:var(--muted); }
+    body[data-cumes-webgpu=pass] .status-dot { background:var(--cyan); }
     body[data-cumes-webgpu=fail] .status-dot { background:var(--danger); }
     .busy .status-dot { background:var(--orange); animation:pulse 1s infinite alternate; }
     @keyframes pulse { to { opacity:.35; } }
-    details { margin-top:18px; border:1px solid var(--line); border-radius:12px; background:#0b141fbb; }
-    summary { cursor:pointer; color:var(--muted); padding:11px 15px; }
-    pre { max-height:280px; overflow:auto; margin:0; padding:0 15px 15px; color:#a9b8ca;
-      white-space:pre-wrap; font:11px/1.55 ui-monospace,SFMono-Regular,monospace; }
-    .legacy { max-width:960px; } .legacy h2 { font-size:24px; }
+    details { margin-top:20px; border:1px solid var(--line); border-radius:4px; background:var(--panel); }
+    summary { cursor:pointer; color:var(--muted); padding:12px 16px; }
+    pre { max-height:280px; overflow:auto; margin:0; padding:0 16px 16px; color:var(--muted);
+      white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 var(--mono); }
+    .legacy { max-width:960px; } .legacy h2 { font-size:34px; letter-spacing:-.025em; }
     .legacy .actions { margin:0 0 18px; }
     .verification-summary { max-height:none; padding:12px 0; }
-    .precision-control { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:18px 0; }
-    .precision-control p { flex-basis:100%; margin:0; color:var(--muted); font-size:12px; }
-    .boundary-choice { display:flex; flex-wrap:wrap; align-items:center; gap:14px; margin:0 0 20px; }
-    body[data-boundary-mode="free"] .fixed-configuration,
-    body[data-surface-editor="true"] .axisymmetric-input { display:none!important; }
-    #free-boundary-controls textarea { box-sizing:border-box; width:100%; padding:10px; margin:8px 0; color:var(--ink); background:#0b1420; border:1px solid var(--line); border-radius:6px; font:12px/1.5 monospace; }
+    .precision-control { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:24px 0 0; }
+    .precision-control p { flex-basis:100%; margin:0; color:var(--muted); font:16px/1.5 var(--serif); }
+    .boundary-choice { display:flex; flex-wrap:wrap; align-items:center; gap:16px; margin:0 0 24px; }
+    .boundary-choice > .subtitle { margin-left:auto; font:16px/1.5 var(--serif); }
+    body[data-boundary-mode=free] .fixed-configuration,
+    body[data-surface-editor=true] .axisymmetric-input { display:none!important; }
+    select,textarea,input[type=number] { color:var(--ink); background:var(--surface);
+      border:1px solid var(--line); border-radius:3px; padding:8px 10px; min-width:0; }
+    textarea { width:100%; font:12px/1.6 var(--mono); resize:vertical; }
+    #free-boundary-controls textarea { margin:8px 0; }
     #free-boundary-controls label { display:block; }
-    #free-boundary-controls select { margin:8px 0; padding:8px; color:var(--ink); background:#0b1420; border:1px solid var(--line); border-radius:6px; }
-    select,textarea,input[type=number] { font:inherit; color:var(--ink); background:#0b1420;
-      border:1px solid var(--line); border-radius:6px; padding:7px 9px; min-width:0; }
-    textarea { width:100%; font:12px/1.5 ui-monospace,monospace; resize:vertical; }
+    #free-boundary-controls select { margin:8px 0; max-width:100%; }
     #free-boundary-controls p { margin:8px 0; }
-    #free-boundary-controls details { margin-top:10px; padding:0 10px 10px; }
-    .setup-row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:14px 20px; border-bottom:1px solid var(--line); }
-    .setup-row label { color:var(--muted); font-size:12px; }
+    #free-boundary-controls details { margin-top:12px; padding:0 10px 10px; }
+    .setup-row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:16px 22px; border-bottom:1px solid var(--line); }
+    .setup-row label { color:var(--muted); }
     .setup-row select { max-width:100%; }
-    .slice-control { padding:0 20px 14px; }
-    .slice-control label { display:flex; justify-content:space-between; gap:12px; font-size:12px; color:var(--muted); }
+    .slice-control { padding:0 22px 16px; }
+    .slice-control label { display:flex; justify-content:space-between; gap:12px; color:var(--muted); }
     .slice-control input { width:100%; accent-color:var(--orange); }
-    .mode-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px; }
-    .mode-table th { text-align:left; color:var(--muted); font-weight:500; padding:6px; }
-    .mode-table th:first-child { width:42px; }
-    .mode-table td { padding:4px; }
-    .mode-table input { width:100%; font:12px ui-monospace,monospace; }
-    .coefficient-scroll { max-height:300px; overflow:auto; }
-    .surface-toolbar { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
-    .surface-toolbar label { color:var(--muted); font-size:12px; }
-    #boundary-error { color:var(--danger); font-size:12px; }
-    #equilibrium-settings { padding:0 12px 12px; }
-    #equilibrium-settings p { color:var(--muted); font-size:12px; }
+    .mode-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:13px; }
+    .mode-table th { text-align:left; color:var(--muted); font-weight:400; padding:8px 6px; border-bottom:1px solid var(--line); }
+    .mode-table th:first-child { width:36px; }
+    .mode-table td { padding:5px 3px; }
+    .mode-table input { width:100%; padding:8px 5px; font:12px var(--mono); }
+    .coefficient-scroll { max-height:340px; overflow:auto; }
+    .coefficient-scroll:has([data-asymmetric-column]:not([hidden])) .mode-table { min-width:460px; }
+    .surface-toolbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px; margin-bottom:14px; }
+    .surface-toolbar label { color:var(--muted); }
+    #surface-editor > label { display:flex; align-items:center; gap:8px; margin:12px 0; }
+    #allow-asymmetry { margin:0; }
+    .editor-tabs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); border-bottom:1px solid var(--line); }
+    .editor-tabs button { border:0; border-bottom:2px solid transparent; padding:16px 12px; background:transparent;
+      color:var(--muted); font-size:18px; cursor:pointer; }
+    .editor-tabs button:hover { color:var(--cyan); background:var(--accent-soft); }
+    .editor-tabs button[aria-selected=true] { color:var(--cyan); border-bottom-color:var(--cyan); background:var(--accent-soft); }
+    .editor-tabs button:focus-visible { outline-offset:-4px; }
+    .boundary-mode-switch { width:fit-content; margin:16px 22px; }
+    .editor-tab-panel.controls { border-top:0; }
+    .editor-common-controls .precision-control { margin:0; }
+    .stage-settings { min-width:0; margin:0; padding:0; border:0; }
+    .stage-count-label { display:flex; align-items:center; gap:12px; }
+    .stage-count-label input { width:6em; }
+    .stage-settings p { margin:10px 0; }
+    .stage-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:14px; }
+    .stage-table th { color:var(--muted); font-weight:400; text-align:left; padding:8px 4px; }
+    .stage-table th:first-child { width:54px; }
+    .stage-table td { padding:5px 4px; }
+    .stage-table input { width:100%; font:13px var(--mono); }
+    .stage-settings details { margin-top:14px; padding:0 10px 12px; }
+    .stage-settings summary { padding-left:4px; padding-right:4px; }
+    .stage-sync-label { display:flex; align-items:flex-start; gap:8px; }
+    .stage-sync-label input { margin:4px 0 0; }
+    #stage-error { color:var(--danger); font-size:14px; }
+    #stage-error:empty { display:none; }
+    #boundary-error { color:var(--danger); font-size:14px; margin:0 0 14px; }
+    #boundary-error:empty { display:none; }
+    #input-upload-status { margin:0; padding:14px 22px; overflow-wrap:anywhere; }
+    #input-upload-status:empty { display:none; }
+    #input-upload-status.error { color:var(--danger); }
+    #equilibrium-settings { margin:0 0 18px; padding:0 12px 12px; }
+    #equilibrium-settings p { color:var(--muted); font:16px/1.5 var(--serif); }
+    .input-preview-actions { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-top:10px; }
+    #input-copy-status { color:var(--muted); font-size:14px; overflow-wrap:anywhere; }
+    #input-copy-status.error { color:var(--danger); }
     [hidden] { display:none!important; }
-    @media(max-width:920px){ .page{width:min(100% - 22px,700px)} .workspace{grid-template-columns:1fr}
-      .site-header{flex-direction:column;align-items:flex-start;gap:16px}.plot-wrap{min-height:390px}svg{min-height:358px}.equilibrium-3d{height:358px} }
-    @media(max-width:520px){ .coefficient-columns{grid-template-columns:1fr}.pressure-control{max-width:none}.status-strip{grid-template-columns:1fr}
-      .metric{border-right:0;border-bottom:1px solid var(--line)} }
+    @media(max-width:1100px) { .header-actions{gap:18px} .page{width:calc(100% - 48px)} .boundary-choice>.subtitle{margin-left:0;flex-basis:100%} }
+    @media(max-width:920px) { .page{width:min(100% - 40px,700px)} .workspace{grid-template-columns:1fr}
+      .site-header{flex-direction:column;align-items:flex-start;gap:20px} .header-actions{width:100%;justify-content:space-between}
+      .plot-wrap{min-height:390px} svg{min-height:358px} .results svg,.equilibrium-3d{height:358px} }
+    @media(max-width:520px) { .page{width:calc(100% - 28px);padding-top:20px} .site-header{gap:16px;padding-bottom:18px}
+      .header-actions{flex-wrap:wrap;gap:14px} nav{gap:20px}
+      .boundary-choice{gap:10px} .panel-head,.controls,.setup-row{padding:16px} .panel-head h2{font-size:22px}
+      .boundary-mode-switch{margin:16px}
+      .coefficient-columns{grid-template-columns:1fr} .pressure-control{max-width:none} .status-strip{grid-template-columns:1fr}
+      .metric{padding:12px 16px;border-right:0;border-bottom:1px solid var(--line)}
+      .result-head-actions{justify-content:flex-start} .residual-legend{gap:8px} .residual-caption{padding:10px 16px 16px}
+      .axis-label,.results .axis-label{font-size:24px}
+      .solver-toolbar{gap:10px;margin-bottom:20px} .solver-toolbar .actions{gap:8px}
+      .mode-switch button{min-height:36px} }
+    @media(prefers-reduced-motion:reduce) { .busy .status-dot{animation:none} }
   </style>
 </head>
 <body>
     <header class="page site-header">
-      <div class="brand"><span class="mark"></span><div><h1>cuMES</h1><div class="subtitle">Magnetic equilibrium · WebGPU</div></div></div>
-      <nav aria-label="Main navigation"><a href="?" data-view="editor">Boundary editor</a><a href="?mode=test" data-view="verification">GPU verification</a></nav>
+      <div class="brand"><span class="mark" aria-hidden="true"></span><div><h1><a href="https://github.com/12ff54e/cuMES">cuMES</a></h1><div class="subtitle">Magnetic equilibrium · <a href="https://webgpu.org/">WebGPU</a></div></div></div>
+      <div class="header-actions">
+        <nav aria-label="Main navigation"><a href="?" data-view="editor">Boundary editor</a><a href="?mode=test" data-view="verification">GPU verification</a></nav>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Dark theme" title="Toggle dark theme" aria-pressed="false"><span aria-hidden="true">◐</span></button>
+      </div>
     </header>
   <div class="page" id="app">
     <section class="boundary-choice" aria-label="Equilibrium boundary condition">
@@ -183,15 +287,21 @@
       </div><span class="subtitle">Switching modes stops the current run and keeps your setup.</span>
     </section>
     <section class="solver-toolbar" aria-label="Solver actions">
-      <div class="actions"><button class="primary" id="run">Run equilibrium</button><button class="secondary" id="stop-run" hidden>Stop and edit</button><button class="secondary" id="reset">Reset</button><a class="secondary" id="download" hidden>Download .bin</a></div>
+      <div class="actions"><button class="primary" id="run">Run equilibrium</button><button class="secondary" id="stop-run" hidden>Stop and edit</button><button class="secondary" id="reset">Reset</button><button class="secondary" id="input-upload-button" type="button">Upload input JSON</button><input id="input-upload" type="file" accept=".json,application/json" aria-label="Upload equilibrium input JSON" hidden><a class="secondary" id="download" hidden>Download .bin</a></div>
       <span class="solver-speed" id="iteration-speed" title="Recent completed solver iterations per second" hidden><output id="iteration-rate" aria-label="Solver iterations per second">—</output> iter/s</span>
     </section>
     <main class="workspace">
       <section class="panel editor">
-        <div class="panel-head"><h2 id="boundary-title">Input boundary</h2><div id="boundary-editor-mode" class="mode-switch" role="tablist" aria-label="Boundary editor mode">
-          <button id="mode-fourier" class="active" role="tab" aria-selected="true">Fourier</button><button id="mode-contour" role="tab" aria-selected="false">Contour</button></div></div>
+        <div class="editor-tabs" role="tablist" aria-label="Equilibrium setup">
+          <button id="editor-tab-boundary" type="button" role="tab" aria-selected="true" aria-controls="editor-panel-boundary"><span id="boundary-title">Input boundary</span></button>
+          <button id="editor-tab-stages" type="button" role="tab" aria-selected="false" aria-controls="editor-panel-stages" tabindex="-1">Radial grid stages</button>
+        </div>
+        <p id="input-upload-status" class="subtitle" role="status"></p>
+        <section id="editor-panel-boundary" class="editor-tab-panel" role="tabpanel" aria-labelledby="editor-tab-boundary">
+        <div id="boundary-editor-mode" class="mode-switch boundary-mode-switch" role="tablist" aria-label="Boundary editor mode">
+          <button id="mode-fourier" class="active" role="tab" aria-selected="true">Fourier</button><button id="mode-contour" role="tab" aria-selected="false">Contour</button></div>
         <div class="setup-row fixed-configuration">
-          <label for="fixed-preset">Boundary preset</label><select id="fixed-preset"><option value="solovev">Solovev · axisymmetric</option><option value="w7x">W7-X · 3-D</option><option value="asymmetric">Asymmetric tokamak</option></select>
+          <label for="fixed-preset">Boundary preset</label><select id="fixed-preset"><option value="solovev">Solovev · axisymmetric</option><option value="w7x">W7-X · 3-D</option><option value="asymmetric">Asymmetric tokamak</option><option value="upload" id="uploaded-preset" hidden>Uploaded JSON</option></select>
           <span class="subtitle" id="fixed-preset-description"></span>
         </div>
         <section id="free-boundary-controls" class="controls" hidden>
@@ -220,13 +330,6 @@
             <p class="subtitle">Edit one toroidal mode at a time. Both views update together. Enable non-stellarator symmetry to edit R sine and Z cosine coefficients.</p>
             <div class="formula">R = Σ [RBC cos(α) + RBS sin(α)]<br>Z = Σ [ZBS sin(α) + ZBC cos(α)], α = mθ − n·NFP·φ</div>
           </section>
-          <details id="equilibrium-settings" hidden><summary>Resolution, profiles and input JSON</summary>
-            <div class="setup-row fixed-configuration"><label for="grid-sequence">Radial grids</label><select id="grid-sequence"><option value="1">Single grid · 99 surfaces</option><option value="3">Multigrid · 33 → 66 → 99</option><option value="custom" hidden>Custom input</option></select></div>
-            <p>VMEC input: boundary coefficients, profiles, field periods, resolution and iteration budget. Apply JSON updates the preview; Run uses the edited input.</p>
-            <textarea id="coil-equilibrium" rows="14" aria-label="Equilibrium input JSON" spellcheck="false"></textarea>
-            <button id="apply-equilibrium" class="secondary" type="button">Apply JSON</button>
-          </details>
-          <p id="boundary-error" role="status"></p>
           <div id="fourier-editor" class="axisymmetric-input">
             <div class="coefficient-columns">
               <section class="harmonic-group"><h3>R cosine coefficients <span>R(θ) = Σ RBC(0,m) cos(mθ)</span></h3><div class="harmonic-controls" id="rbc-controls"></div></section>
@@ -243,6 +346,29 @@
             <button class="secondary" id="reset-contour">Reset points from Fourier fit</button>
           </div>
           <label class="pressure-control axisymmetric-input">Pressure scale <output id="pressure-value"></output><input id="pressure" type="range" min="0.02" max="0.22" step="0.005"></label>
+        </div>
+        </section>
+        <section id="editor-panel-stages" class="controls editor-tab-panel" role="tabpanel" aria-labelledby="editor-tab-stages" hidden>
+          <fieldset id="stage-settings" class="stage-settings" aria-label="Radial grid stages">
+            <label class="stage-count-label" for="stage-count">Stage count <input id="stage-count" type="number" min="1" max="510" step="1" value="1" aria-describedby="stage-count-help stage-error"></label>
+            <p class="subtitle" id="stage-count-help">Changing the count spaces grids evenly up to the current final grid. Grid sizes must increase from one stage to the next.</p>
+            <table class="stage-table"><thead><tr><th scope="col">Stage</th><th scope="col">Radial grid points</th></tr></thead><tbody id="stage-grids"></tbody></table>
+            <details id="stage-limits"><summary>Step caps and tolerances</summary>
+              <label class="stage-sync-label"><input id="stage-sync-limits" type="checkbox"> Use the same step cap and tolerance for all stages</label>
+              <p class="subtitle">Enabling sync copies stage 1 to the other stages. Edits in any stage then update all stages.</p>
+              <table class="stage-table"><thead><tr><th scope="col">Stage</th><th scope="col">Step cap</th><th scope="col">Tolerance</th></tr></thead><tbody id="stage-limit-rows"></tbody></table>
+              <p class="subtitle" id="stage-tolerance-floor"></p>
+            </details>
+            <p id="stage-error" role="status"></p>
+          </fieldset>
+        </section>
+        <div class="controls editor-common-controls">
+          <p id="boundary-error" role="status"></p>
+          <details id="equilibrium-settings"><summary>Input JSON preview</summary>
+            <p>Current solver input. Use the controls or upload an input JSON file to make changes.</p>
+            <textarea id="coil-equilibrium" rows="12" aria-label="Input JSON preview" spellcheck="false" wrap="off" readonly></textarea>
+            <div class="input-preview-actions"><button id="copy-input-json" class="secondary" type="button" disabled>Copy JSON</button><span id="input-copy-status" role="status">Preparing input JSON…</span></div>
+          </details>
           <section class="precision-control" id="editor-precision-control" aria-label="Solver precision" hidden>
             <span>Precision</span>
             <div class="mode-switch" role="group" aria-label="Select precision">
@@ -308,8 +434,9 @@
   <script>
     migrateCumesEditorUrl(location,history);
     installCumesBrowser();
-    const query=new URLSearchParams(location.search),w7xPreset=query.get('preset')==='w7x',asymmetricPreset=query.get('preset')==='asymmetric';
-    const fixedStorageKey=asymmetricPreset?'cumes.fixed.asymmetric.v1':'cumes.fixed.w7x.v1';
+    const query=new URLSearchParams(location.search),w7xPreset=query.get('preset')==='w7x',asymmetricPreset=query.get('preset')==='asymmetric',uploadedPreset=query.get('preset')==='upload';
+    const uploadStorageKey='cumes.fixed.upload.v1';
+    const fixedStorageKey=uploadedPreset?uploadStorageKey:asymmetricPreset?'cumes.fixed.asymmetric.v1':'cumes.fixed.w7x.v1';
     const appMode=query.get('mode')!=='test',running=appMode&&query.get('run')==='1';
     const boundaryMode=installCumesBoundaryMode();
     document.getElementById('free-precision-note').hidden=!boundaryMode.free;
@@ -346,28 +473,54 @@
           const next=new URL(location.href);
           next.searchParams.set('precision',precision);
           next.searchParams.delete('coils');
-          beforeSwitch();
+          if(beforeSwitch(precision)===false)return;
           location.assign(next.href);
         });
       }
     }
-    installPrecisionSwitch(document,location,()=>{if(appMode){saveSurfaceInput();localStorage.setItem('cumes.input.v1',inputJSON())}});
+    installPrecisionSwitch(document,location,precision=>{if(appMode){try{
+      if(stageEditor)writeStageSettings(stageEditor.read(precision));
+      saveSurfaceInput();localStorage.setItem('cumes.input.v1',inputJSON());
+    }catch(error){stageEditor?.showError(error.message);return false}}});
     const MAX_M=5,CONTOUR_POINTS=16,TRANSFORM_SAMPLES=512;
     const defaults={r:[3.999,1.026,-.068,0,0,0],z:[0,1.580,.010,0,0,0],pressure:.125};
-    const editorStorageKey=asymmetricPreset?fixedStorageKey+'.editor':'cumes.editor.v1';
+    const editorStorageKey=(asymmetricPreset||uploadedPreset)?fixedStorageKey+'.editor':'cumes.editor.v1';
     const saved=(()=>{try{return JSON.parse(localStorage.getItem(editorStorageKey))}catch(_){return null}})();
     const finite=(candidate,fallback)=>Number.isFinite(Number(candidate))?Number(candidate):fallback;
     const savedContour=Array.isArray(saved?.contour)&&saved.contour.length>=4&&saved.contour.length%2===0&&
       saved.contour.every(point=>Array.isArray(point)&&point.length===2&&point.every(Number.isFinite))?
       saved.contour.map(point=>point.map(Number)):null;
     const shape={r:defaults.r.map((v,m)=>finite(saved?.r?.[m],v)),z:defaults.z.map((v,m)=>finite(saved?.z?.[m],v)),
+      stages:saved?.stages||{ns_array:[5,11,55],niter_array:[1200,2500,3000],ftol_array:Array(3).fill(document.body.dataset.cumesPrecision==='double'?1e-12:1e-5)},
       pressure:finite(saved?.pressure,defaults.pressure),contour:savedContour,mode:saved?.mode==='contour'?'contour':'fourier',
       contourPoints:Number.isInteger(saved?.contourPoints)&&saved.contourPoints>=4&&saved.contourPoints%2===0?
         saved.contourPoints:savedContour?.length||CONTOUR_POINTS};
-    let editorMode=shape.mode,surfaceEditor=null;
-    const advancedEditor=appMode&&(boundaryMode.free||w7xPreset||asymmetricPreset);
+    let editorMode=shape.mode,surfaceEditor=null,surfaceInput=null,stageEditor=null,inputLoading=false,copyingInput=false;
+    const advancedEditor=appMode&&(boundaryMode.free||w7xPreset||asymmetricPreset||uploadedPreset);
+    const stageSyncStorageKey=(boundaryMode.free?'cumes.free.v1':advancedEditor?fixedStorageKey:editorStorageKey)+'.stage-sync';
     document.body.dataset.surfaceEditor=String(advancedEditor);
     const value=id=>document.getElementById(id);
+    const editorTabKey='cumes.editor.tab',editorTabs=['boundary','stages'];
+    function selectEditorTab(selected,focus=false){
+      if(!editorTabs.includes(selected))selected='boundary';
+      for(const name of editorTabs){const active=name===selected,tab=value('editor-tab-'+name);
+        tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;
+        value('editor-panel-'+name).hidden=!active;
+      }
+      sessionStorage.setItem(editorTabKey,selected);
+      if(focus)value('editor-tab-'+selected).focus();
+    }
+    if(appMode){
+      for(const [index,name] of editorTabs.entries()){
+        const tab=value('editor-tab-'+name);
+        tab.addEventListener('click',()=>selectEditorTab(name));
+        tab.addEventListener('keydown',event=>{
+          const next={ArrowRight:(index+1)%editorTabs.length,ArrowLeft:(index+editorTabs.length-1)%editorTabs.length,Home:0,End:editorTabs.length-1}[event.key];
+          if(next===undefined)return;event.preventDefault();selectEditorTab(editorTabs[next],true);
+        });
+      }
+      selectEditorTab(sessionStorage.getItem(editorTabKey));
+    }
     const harmonicSpecs=[...Array.from({length:6},(_,m)=>({family:'r',m,id:`rbc-${m}`})),
       ...Array.from({length:5},(_,i)=>({family:'z',m:i+1,id:`zbs-${i+1}`}))];
     function coefficientBounds(family,m){if(family==='r'&&m===0)return[1,10];if(m===1)return[-3,3];return[-1,1]}
@@ -383,12 +536,12 @@
       value(`${spec.id}-value`).textContent=shape[spec.family][spec.m].toFixed(3)}
       value('pressure').value=Math.min(Number(value('pressure').max),Math.max(Number(value('pressure').min),shape.pressure));
       value('pressure-value').textContent=Number(value('pressure').value).toFixed(3)}
-    function contourAvailable(){return !advancedEditor||(asymmetricPreset&&!boundaryMode.free&&surfaceEditor?.fourier?.ntor===0)}
+    function contourAvailable(){return !advancedEditor||((asymmetricPreset||uploadedPreset)&&!boundaryMode.free&&surfaceEditor?.fourier?.ntor===0)}
     function contourMpol(){return advancedEditor?surfaceEditor.fourier.mpol:MAX_M+1}
     function contourAsymmetric(){return advancedEditor&&surfaceEditor.fourier.lasym}
     function contourPointRange(){return[12,36]}
     function contourPointCount(){const[min,max]=contourPointRange();return Math.min(max,Math.max(min,shape.contourPoints))}
-    function saveContourState(){if(!advancedEditor||asymmetricPreset)localStorage.setItem(editorStorageKey,
+    function saveContourState(){if(!advancedEditor||asymmetricPreset||uploadedPreset)localStorage.setItem(editorStorageKey,
       JSON.stringify(advancedEditor?{mode:shape.mode,contour:shape.contour,contourPoints:shape.contourPoints}:shape))}
     function pointAt(theta){if(advancedEditor){const f=surfaceEditor.fourier;return fourierPoint(f,f.surfaces[0].coefficients,theta,0)}
       let r=0,z=0;for(let m=0;m<shape.r.length;++m)r+=shape.r[m]*Math.cos(m*theta);
@@ -426,8 +579,9 @@
       const fit=Array.from({length:161},(_,i)=>pointAt(2*Math.PI*i/160)),target=editorMode==='contour'?
         Array.from({length:161},(_,i)=>contourAt(2*Math.PI*i/160)):fit;
       boundaryProjection=projection([...fit,...target],600,520,65);drawGrid(svg,600,520);
-      if(editorMode==='contour')svg.append(node('path',{d:pathData(target,boundaryProjection.map),class:'contour-target'}));
       svg.append(node('path',{d:pathData(fit,boundaryProjection.map),class:'boundary'}));
+      // Keep the target above the filled fit, with the draggable handles on top.
+      if(editorMode==='contour')svg.append(node('path',{d:pathData(target,boundaryProjection.map),class:'contour-target'}));
       if(editorMode==='contour'){ensureContour();for(let i=0;i<shape.contour.length;i++){const[x,y]=boundaryProjection.map(shape.contour[i]);
         svg.append(node('circle',{cx:x,cy:y,r:6,class:'handle','data-index':i}))}value('fit-error').textContent=`RMS fit error: ${contourFitError().toExponential(2)} m`}
       saveContourState()}
@@ -466,19 +620,84 @@
       const points=Array.from({length:count},(_,i)=>contourAt(2*Math.PI*i/count));
       shape.contourPoints=count;shape.contour=points;activeHandle=null;syncEditorMode();drawBoundary()});
     function inputJSON(){if(advancedEditor){const input=boundaryMode.free?boundaryMode.input():readSurfaceInput();
-      input.lfreeb=boundaryMode.free;input.ftol_array=input.ns_array.map(()=>document.body.dataset.cumesPrecision==='double'?1e-12:1e-5);return JSON.stringify(input)}const harmonics=(values,start)=>values.slice(start).map((v,i)=>({n:0,m:i+start,value:Number(v.toFixed(8))}));
-      return JSON.stringify({mpol:6,ntor:0,delt:.9,ncurr:0,nstep:250,ns_array:[5,11,55],niter_array:[1200,2500,3000],
-        ftol_array:Array(3).fill(query.get('precision')==='double'?1e-12:1e-5),am:[shape.pressure,-shape.pressure],ai:[1],raxis_c:[shape.r[0]],zaxis_s:[0],
+      input.lfreeb=boundaryMode.free;return JSON.stringify(input)}const harmonics=(values,start)=>values.slice(start).map((v,i)=>({n:0,m:i+start,value:Number(v.toFixed(8))}));
+      return JSON.stringify({mpol:6,ntor:0,delt:.9,ncurr:0,nstep:250,...shape.stages,
+        am:[shape.pressure,-shape.pressure],ai:[1],raxis_c:[shape.r[0]],zaxis_s:[0],
         rbc:harmonics(shape.r,0),zbs:harmonics(shape.z,1)},null,2)}
-    value('run')?.addEventListener('click',async()=>{if(value('run').disabled)return;try{await editorReady;
+    function refreshInputPreview(){if(!appMode)return null;
+      const preview=value('coil-equilibrium'),button=value('copy-input-json'),status=value('input-copy-status');
+      try{
+        if(value('stage-error').textContent)throw Error(value('stage-error').textContent);
+        for(const control of document.querySelectorAll('#boundary-coefficients input:not(:disabled)'))
+          if(control.value===''||!control.validity.valid)throw Error('Enter finite boundary coefficients to preview the input.');
+        const source=JSON.stringify(JSON.parse(inputJSON()),null,2);
+        if(preview.value!==source||status.classList.contains('error'))status.textContent='';
+        preview.value=source;button.disabled=copyingInput;status.classList.remove('error');return source;
+      }catch(error){preview.value='';button.disabled=true;status.classList.add('error');status.textContent=error.message;return null}
+    }
+    value('equilibrium-settings').addEventListener('toggle',()=>{if(value('equilibrium-settings').open)refreshInputPreview()});
+    value('copy-input-json').addEventListener('click',async()=>{
+      const source=refreshInputPreview();if(source===null)return;
+      const button=value('copy-input-json'),preview=value('coil-equilibrium'),status=value('input-copy-status');
+      copyingInput=true;button.disabled=true;
+      try{await navigator.clipboard.writeText(source);
+        if(preview.value===source)status.textContent='Copied to clipboard.';
+      }catch(_){if(preview.value===source){preview.focus();preview.select();
+        status.textContent='Clipboard unavailable. The JSON is selected; copy it manually.';}}
+      finally{copyingInput=false;button.disabled=!preview.value}
+    });
+    value('run')?.addEventListener('click',async()=>{if(value('run').disabled||inputLoading)return;try{await editorReady;
+      value('boundary-error').textContent='';
+      stageEditor.read();
       if(advancedEditor){for(const control of document.querySelectorAll('#boundary-coefficients input:not(:disabled)')){if(control.value===''||!control.validity.valid)throw Error('Enter finite boundary coefficients before running.')}saveSurfaceInput()}
-      localStorage.setItem('cumes.input.v1',inputJSON());value('run').disabled=true;
-      const next=new URL(location.href);next.searchParams.set('run','1');next.searchParams.delete('coils');location.assign(next.href)}catch(error){value('boundary-error').textContent=error.message}});
-    value('reset')?.addEventListener('click',()=>{if(boundaryMode.free)localStorage.removeItem('cumes.free.v1');else if(w7xPreset||asymmetricPreset)localStorage.removeItem(fixedStorageKey);else localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
-      if(asymmetricPreset)localStorage.removeItem(editorStorageKey);
+      const source=inputJSON();cumesValidateStages(JSON.parse(source),document.body.dataset.cumesPrecision);
+      localStorage.setItem('cumes.input.v1',source);value('run').disabled=true;
+      const next=new URL(location.href);next.searchParams.set('run','1');next.searchParams.delete('coils');location.assign(next.href)}catch(error){
+        if(value('stage-error').textContent===error.message)selectEditorTab('stages',value('editor-panel-stages').hidden);
+        else value('boundary-error').textContent=error.message;
+      }});
+    value('reset')?.addEventListener('click',()=>{if(boundaryMode.free)localStorage.removeItem('cumes.free.v1');else if(advancedEditor)localStorage.removeItem(fixedStorageKey);else localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
+      localStorage.removeItem(stageSyncStorageKey);
+      if(asymmetricPreset||uploadedPreset)localStorage.removeItem(editorStorageKey);
       const next=new URL(location.href);next.searchParams.delete('run');
       if(boundaryMode.free)next.searchParams.set('coils',value('coil-preset').value==='upload'?'solovev':value('coil-preset').value);
+      else if(uploadedPreset)selectUploadedPrecision(next,localStorage.getItem(uploadStorageKey+'.original'));
       location.assign(next.href)});
+    value('input-upload-button').addEventListener('click',()=>value('input-upload').click());
+    value('input-upload').addEventListener('change',async event=>{
+      const file=event.target.files[0];
+      if(!file||inputLoading||document.body.classList.contains('busy'))return;
+      const status=value('input-upload-status'),runDisabled=value('run').disabled;
+      inputLoading=true;value('input-upload-button').disabled=true;value('input-upload').disabled=true;value('run').disabled=true;
+      status.classList.remove('error');status.textContent='Reading '+file.name+'…';
+      let navigating=false;
+      try{
+        const {input,precision}=readCumesInputJSON(await file.text(),document.body.dataset.cumesPrecision);
+        const next=new URL(location.href);
+        for(const key of ['run','mode','solve','grids','coils'])next.searchParams.delete(key);
+        next.searchParams.set('precision',precision);
+        next.searchParams.set('boundary',input.lfreeb?'free':'fixed');
+        if(input.lfreeb){
+          let saved;try{saved=JSON.parse(localStorage.getItem('cumes.free.v1'))}catch(_){}
+          const config=cumesFreeInputConfig(input,saved);
+          if(config.preset==='upload'&&!await cumesCoilStore())throw Error('Upload the referenced coil file again before loading this input JSON.');
+          localStorage.setItem('cumes.free.v1',JSON.stringify({...config,inputName:file.name}));
+          next.searchParams.delete('preset');
+        }else{
+          const source=JSON.stringify(input);
+          localStorage.setItem(uploadStorageKey+'.original',source);
+          localStorage.setItem(uploadStorageKey,source);
+          localStorage.setItem(uploadStorageKey+'.name',file.name);
+          localStorage.removeItem(uploadStorageKey+'.editor');
+          next.searchParams.set('preset','upload');
+        }
+        selectEditorTab('boundary');navigating=true;location.assign(next.href);
+      }catch(error){status.classList.add('error');status.textContent='Could not load '+file.name+': '+error.message}
+      finally{event.target.value='';inputLoading=false;if(!navigating){
+        const busy=document.body.classList.contains('busy');value('input-upload-button').disabled=busy;value('input-upload').disabled=busy;
+        value('run').disabled=busy||runDisabled;
+      }}
+    });
     const verificationMode=!appMode;
     if(verificationMode){output.textContent='Requesting WebGPU…\n';output.classList.add('verification-summary');
       value('verification-progress').hidden=false;value('verification-details').hidden=false}
@@ -523,14 +742,14 @@
       const canvas=value('result-3d');if(canvas.cumesOrbit){canvas.cumesOrbit.section=resultMode==='2d'&&showInset?resultSection:null;queueOrbitDraw(canvas)}
       svg.setAttribute('aria-label',`Converged flux-surface cross-section at ζ = ${(phi*180/Math.PI).toFixed(1)} degrees`);svg.replaceChildren();
       const p=projection(surfaces.flat(),700,520,55);drawGrid(svg,700,520);surfaces.forEach((surface,i)=>{const d=surface.map((v,j)=>`${j?'L':'M'}${p.map(v).join(',')}`).join(' '),
-        t=surfaces.length<2?1:i/(surfaces.length-1);svg.append(node('path',{d,fill:'none',stroke:`hsl(${188+32*t} 78% ${55+16*t}%)`,'stroke-width':i===surfaces.length-1?2.5:1.15,opacity:.55+.45*t}))})}
+        t=surfaces.length<2?1:i/(surfaces.length-1);svg.append(node('path',{d,fill:'none',class:'flux-surface','stroke-width':i===surfaces.length-1?2.5:1.15,opacity:.55+.45*t}))})}
     value('result-slice-angle').addEventListener('input',drawResultSlice);
     function drawResult(data){if(!data.surfaces?.length)return;resultData=data;value('result-slice-angle').value=0;
       value('result-title').textContent='Flux surfaces';value('preview-label').hidden=true;drawResultSlice();
       if(data.fourier&&appMode){value('result-switch').hidden=false;installOrbitRenderer(value('result-3d'),data.fourier);showResultMode('3d')}
       else{value('result-switch').hidden=true;showResultMode('2d')}
       if(appMode){value('result-empty').hidden=true;value('iteration').textContent=String(data.iterations);value('fsqr').textContent=Number(data.residual[0]).toExponential(3)}}
-    function invalidateResult(){if(document.body.dataset.cumesWebgpu!=='pass'&&document.body.dataset.cumesWebgpu!=='fail')return;
+    function invalidateResult(){refreshInputPreview();if(document.body.dataset.cumesWebgpu!=='pass'&&document.body.dataset.cumesWebgpu!=='fail')return;
       document.body.dataset.cumesWebgpu='ready';value('status').textContent='Boundary changed';value('run').textContent='Run updated boundary';
       value('iteration').textContent='—';value('fsqr').textContent='—';value('result-plot').replaceChildren();value('result-plot').removeAttribute('hidden');
       resultData=null;resultSection=null;showResultMode('2d');value('result-switch').hidden=true;value('result-empty').hidden=false;
@@ -538,7 +757,9 @@
       if(advancedEditor)showBoundaryPreview()}
     window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
     function setEditorDisabled(disabled){document.querySelectorAll('.coefficient-slider,#pressure,#contour-points,.mode-switch button:not([id^="editor-precision-"]):not([id^="boundary-"]),#reset-contour').forEach(control=>control.disabled=disabled);
-      document.querySelectorAll('#free-boundary-controls textarea,#free-boundary-controls select,#coil-upload-button,#coil-upload,#coil-equilibrium,#apply-equilibrium,#grid-sequence,#allow-asymmetry,#boundary-coefficients input').forEach(control=>control.disabled=disabled);
+      value('input-upload-button').disabled=disabled||inputLoading;value('input-upload').disabled=disabled||inputLoading;
+      document.querySelectorAll('#free-boundary-controls textarea,#free-boundary-controls select,#coil-upload-button,#coil-upload,#allow-asymmetry,#boundary-coefficients input').forEach(control=>control.disabled=disabled);
+      value('stage-settings').disabled=disabled;
       for(const family of ['zbs','rbs']){const dc=document.querySelector(`#boundary-coefficients input[data-family="${family}"][data-m="0"][data-n="0"]`);if(dc)dc.disabled=true;}
       value('reset').disabled=disabled}
     function updateStatus(){const state=document.body.dataset.cumesWebgpu;
@@ -555,26 +776,40 @@
       syncControls();setEditorMode(editorMode,true)}setEditorDisabled(running);
       if(running){document.body.classList.add('busy');value('run').disabled=true;value('run').textContent='Solving…';value('status').textContent='Requesting GPU';
         value('result-empty').innerHTML='<strong>Computing equilibrium…</strong><span>The equilibrium is computed locally on your machine.</span>'}}
-    function readSurfaceInput(){return JSON.parse(value('coil-equilibrium').value)}
-    function writeSurfaceInput(input){value('coil-equilibrium').value=JSON.stringify(input,null,2);saveSurfaceInput()}
+    function readSurfaceInput(){return boundaryMode.free?boundaryMode.equilibrium():structuredClone(surfaceInput)}
+    function writeSurfaceInput(input){if(boundaryMode.free)boundaryMode.setEquilibrium(input);else surfaceInput=structuredClone(input);saveSurfaceInput()}
     function saveSurfaceInput(){if(!advancedEditor)return;if(boundaryMode.free)boundaryMode.save();
       else localStorage.setItem(fixedStorageKey,JSON.stringify(readSurfaceInput()))}
+    function writeStageSettings(stages){
+      if(advancedEditor){const input=readSurfaceInput();Object.assign(input,stages);writeSurfaceInput(input)}
+      else{shape.stages=cumesStageArrays(stages);saveContourState()}
+    }
+    function prepareStageEditor(){
+      stageEditor=installCumesStageEditor(value('stage-settings'),document.body.dataset.cumesPrecision,stageSyncStorageKey,
+        stages=>{writeStageSettings(stages);invalidateResult()},stages=>{
+          const tolerances=stages.ftol_array,same=tolerances.every(v=>v===tolerances[0]);
+          value('editor-precision-tolerance').textContent=`${same?'Tolerance':'Final tolerance'}: ${tolerances.at(-1).toExponential()}`;
+          window.cumesResidualPlot?.setTolerance(tolerances[0]);
+        },()=>selectEditorTab('stages',value('editor-panel-stages').hidden));
+      // Loading a saved preset must preserve the selected tab, even if its stages need correction.
+      stageEditor.refresh(advancedEditor?readSurfaceInput():shape.stages,false);
+    }
     let w7xGridInput;
     function selectW7xGrids(input,grids){
       if(grids==='3'){input.ns_array=[...w7xGridInput.ns_array];input.niter_array=[...w7xGridInput.niter_array]}
       else{input.ns_array=[w7xGridInput.ns_array.at(-1)];input.niter_array=[w7xGridInput.niter_array.reduce((sum,n)=>sum+n,0)]}
       input.ftol_array=input.ns_array.map(()=>document.body.dataset.cumesPrecision==='double'?1e-12:1e-5);
     }
-    value('fixed-preset').value=asymmetricPreset?'asymmetric':w7xPreset?'w7x':'solovev';
-    value('fixed-preset-description').textContent=(w7xPreset||asymmetricPreset)?'Prescribed plasma boundary':'Drag a contour or tune its harmonics';
+    function selectUploadedPrecision(url,source){try{
+      url.searchParams.set('precision',readCumesInputJSON(source,document.body.dataset.cumesPrecision).precision);
+    }catch(_){/* Keep the saved setup available for correction through its controls. */}}
+    value('uploaded-preset').hidden=!localStorage.getItem(uploadStorageKey+'.original');
+    value('fixed-preset').value=uploadedPreset?'upload':asymmetricPreset?'asymmetric':w7xPreset?'w7x':'solovev';
+    value('fixed-preset-description').textContent=(w7xPreset||asymmetricPreset||uploadedPreset)?'Prescribed plasma boundary':'Drag a contour or tune its harmonics';
     value('fixed-preset').addEventListener('change',()=>{saveSurfaceInput();const next=new URL(location.href);
-      next.searchParams.set('preset',value('fixed-preset').value);next.searchParams.delete('run');next.searchParams.delete('grids');location.assign(next.href)});
-    value('grid-sequence').addEventListener('change',()=>{const grids=value('grid-sequence').value;if(grids==='custom')return;
-      const input=readSurfaceInput();selectW7xGrids(input,grids);writeSurfaceInput(input);
-      invalidateResult()});
-    function syncGridSequence(){if(boundaryMode.free||!w7xGridInput)return;const grids=readSurfaceInput().ns_array.join(',');
-      value('grid-sequence').options[0].textContent=`Single grid · ${w7xGridInput.ns_array.at(-1)} surfaces`;value('grid-sequence').options[1].textContent=`Multigrid · ${w7xGridInput.ns_array.join(' → ')}`;
-      value('grid-sequence').value=grids===String(w7xGridInput.ns_array.at(-1))?'1':grids===w7xGridInput.ns_array.join(',')?'3':'custom'}
+      next.searchParams.set('preset',value('fixed-preset').value);next.searchParams.delete('run');next.searchParams.delete('grids');
+      if(value('fixed-preset').value==='upload')selectUploadedPrecision(next,localStorage.getItem(uploadStorageKey)||localStorage.getItem(uploadStorageKey+'.original'));
+      location.assign(next.href)});
     function drawSurfaceBoundary(){if(!surfaceEditor?.fourier)return;
       syncEditorMode();
       if(editorMode==='contour')drawTokamakBoundary();
@@ -599,32 +834,41 @@
       if(!appMode)return;
       value('surface-editor').hidden=!advancedEditor;value('slice-control').hidden=!advancedEditor;
       value('boundary-editor-mode').hidden=advancedEditor;
-      value('equilibrium-settings').hidden=!advancedEditor;
       value('boundary-title').textContent=boundaryMode.free?'Initial plasma boundary':'Input boundary';
-      if(!advancedEditor)return;
+      if(!advancedEditor){prepareStageEditor();return}
       value('run').disabled=true;
-      if(boundaryMode.free)await boundaryMode.ready;
-      else{
+      if(boundaryMode.free){await boundaryMode.ready;
+        // The named preset initializes once; reloads retain subsequent edits.
+        if(query.has('coils')){const next=new URL(location.href);next.searchParams.delete('coils');history.replaceState(null,'',next.href)}
+      }
+      else if(uploadedPreset){
+        const source=localStorage.getItem(fixedStorageKey)||localStorage.getItem(fixedStorageKey+'.original');
+        if(!source)throw Error('Upload an input JSON file to open this setup.');
+        writeSurfaceInput(JSON.parse(source));
+        value('input-upload-status').textContent='Loaded '+(localStorage.getItem(fixedStorageKey+'.name')||'input JSON');
+      }else{
         const response=await fetch(new URL(asymmetricPreset?'presets/fixed-asymmetric.json':'presets/fixed-w7x.json',location.href));
         if(!response.ok)throw Error('Could not load the boundary preset.');
         w7xGridInput=await response.json();let input;
         try{input=JSON.parse(localStorage.getItem(fixedStorageKey))}catch(_){}
         if(!input){input=structuredClone(w7xGridInput);selectW7xGrids(input,query.get('grids')||(asymmetricPreset?'3':'1'))}
         else if(query.has('grids'))selectW7xGrids(input,query.get('grids'));
-        writeSurfaceInput(input);syncGridSequence();
-        // Grid query parameters initialize setup once; subsequent JSON edits remain authoritative.
+        writeSurfaceInput(input);
+        // Grid query parameters initialize setup once; subsequent stage edits remain authoritative.
         if(query.has('grids')){const next=new URL(location.href);next.searchParams.delete('grids');history.replaceState(null,'',next.href)}
       }
+      prepareStageEditor();
       surfaceEditor=installCumesSurfaceEditor(readSurfaceInput,writeSurfaceInput,changed=>{
         if(changed){shape.contour=null;invalidateResult()}drawSurfaceBoundary();
       });
-      window.cumesBoundaryChanged=()=>{if(surfaceEditor.refresh()){invalidateResult();drawSurfaceBoundary();setEditorDisabled(running&&document.body.classList.contains('busy'))}};
-      value('apply-equilibrium').addEventListener('click',()=>{shape.contour=null;if(surfaceEditor.refresh()){saveSurfaceInput();syncGridSequence();invalidateResult();drawSurfaceBoundary()}});
+      window.cumesBoundaryChanged=()=>{stageEditor.refresh(readSurfaceInput());if(surfaceEditor.refresh()){invalidateResult();drawSurfaceBoundary();setEditorDisabled(running&&document.body.classList.contains('busy'))}};
       if(!surfaceEditor.refresh())throw Error(value('boundary-error').textContent);
       setEditorDisabled(running);value('run').disabled=running;
     }
-    for(const id of ['coil-equilibrium','coil-currents','coil-grid'])value(id).addEventListener('input',invalidateResult);
-    value('coil-equilibrium').addEventListener('input',()=>{shape.contour=null;saveContourState()});
+    for(const id of ['coil-currents','coil-grid'])value(id).addEventListener('input',invalidateResult);
+    for(const type of ['input','change'])app.addEventListener(type,event=>{
+      if(event.target.closest('#stage-settings,#boundary-coefficients'))refreshInputPreview();
+    });
     const editorReady=prepareEditor();
     function versionedAsset(path,prefix){
       const runtime=document.getElementById('cumes-runtime').content.querySelector('script');
@@ -644,6 +888,7 @@
     (async()=>{try{
       await globalThis.cumesIsolationReady;
       await editorReady;
+      refreshInputPreview();
       if(appMode&&boundaryMode.free){
         await boundaryMode.ready;
         if(running){

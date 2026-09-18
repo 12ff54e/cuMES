@@ -29,10 +29,11 @@ try{
   console.log(JSON.stringify({target,url,storage:'session'}));
   await wait(`document.body?.dataset.cumesWebgpu==='ready'`,30000);
   assert.equal(await evaluate('document.body.dataset.cumesPrecision'),'float');
-  const boundary=await evaluate(`localStorage.getItem('cumes.editor.v1')`);
+  const boundaryOnly=source=>{const {stages,...boundary}=JSON.parse(source);return boundary};
+  const boundary=boundaryOnly(await evaluate(`localStorage.getItem('cumes.editor.v1')`));
   await evaluate(`document.getElementById('editor-precision-double').click()`);
   await wait(`document.body?.dataset.cumesWebgpu==='ready'&&document.body.dataset.cumesPrecision==='double'`,30000);
-  assert.equal(await evaluate(`localStorage.getItem('cumes.editor.v1')`),boundary);
+  assert.deepEqual(boundaryOnly(await evaluate(`localStorage.getItem('cumes.editor.v1')`)),boundary);
   await evaluate(`document.getElementById('run').click()`);
   for(const precision of ['double','float']){
     await wait(`document.body?.dataset.cumesPrecision==='${precision}'&&window.cumesResidualPlot?.report().samples.length>=3`);
@@ -44,7 +45,10 @@ try{
       trace:window.cumesDiagnostics||[],plot:window.cumesResidualPlot.report()})`);
     await writeFile(`${prefix}-${precision}.json`,JSON.stringify(result));
     assert.equal(result.dataset.cumesWebgpu,'pass',result.dataset.cumesDetail);
-    assert.equal(result.boundary,boundary,'precision switch changed boundary');
+    assert.deepEqual(boundaryOnly(result.boundary),boundary,'precision switch changed boundary');
+    const schedule=JSON.parse(result.boundary).stages;
+    assert.deepEqual(schedule.ns_array,[5,11,55]);assert.deepEqual(schedule.niter_array,[1200,2500,3000]);
+    assert.deepEqual(schedule.ftol_array,Array(3).fill(precision==='double'?1e-12:1e-5));
     assert.match(result.log,new RegExp(precision==='double'?'double-single ftol=1e-12':'float ftol=1e-05'));
     const samples=result.plot.samples,trace=result.trace.filter(row=>row.kind==='controller');
     assert.ok(samples.length>=Number(result.dataset.cumesIteration));

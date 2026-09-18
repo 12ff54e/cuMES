@@ -5,6 +5,42 @@ All notable changes to cuMES are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.8.0] - 2026-09-18
+
+### Added
+
+- Editable radial grid stages for every browser preset: stage count, radial
+  grid points, step caps, and tolerances. Step caps and tolerances are folded
+  by default, with an optional checkbox to synchronize them across stages.
+  Custom settings persist across reloads and precision switches.
+- Input JSON uploads for fixed and free boundaries, retaining boundary
+  coefficients, profiles, resolution, and stage settings. Fixed uploads have
+  a separate saved setup; Reset restores the original uploaded input.
+- A complete, read-only input JSON preview with a Copy JSON button, available
+  from either setup tab and during solves. Free-boundary previews include
+  coil currents, the coil file, and field-grid parameters. Clipboard failures
+  select the text for manual copying.
+
+### Changed
+
+- Restyled the browser interface with Biolinum/Libertine typography,
+  teal/terracotta accents, warm light and grey dark themes, and matching
+  boundary, residual, coil, and flux-surface plot colors. The theme toggle is
+  icon-only, and the header links to the cuMES repository and WebGPU website.
+- Split boundary setup and radial grid stages into keyboard-accessible tabs
+  to reduce panel height while retaining edits and the selected tab.
+- Replaced inline JSON editing with the shared preview. Profiles and angular
+  resolution can be changed by uploading a revised input JSON file.
+
+### Fixed
+
+- Dashed target contours remain visible above the filled plasma boundary.
+- Solovev result views retain a consistent height before and after solving.
+- Loading a preset preserves the selected setup tab when saved stage
+  settings need correction; Run still reveals invalid stage settings.
+- Browser solves honor configured stage tolerances instead of replacing
+  them with the precision defaults.
+
 ## [1.7.0] - 2026-09-17
 
 ### Added

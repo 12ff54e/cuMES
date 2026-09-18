@@ -1,7 +1,8 @@
 // Rendering owns its device and buffers; it never uses the solver's device.
-// Surfaces, coils, and line indices stay resident. Orbiting uploads only the camera.
+// Surfaces, coils, and line indices stay resident. Only camera/theme uniforms change.
 const ORBIT_RENDER_SHADER = `
-struct Camera { rotation: vec4f, viewport: vec4f }
+struct Camera { rotation: vec4f, viewport: vec4f,
+                inner_color: vec4f, outer_color: vec4f, section_color: vec4f, coil_color: vec4f }
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<storage, read> radius_bits: array<u32>;
 @group(1) @binding(0) var<storage, read> points: array<vec4f>;
@@ -38,10 +39,10 @@ struct Vertex { @builtin(position) position: vec4f, @location(0) color: vec4f }
                      1.8, radial < -1.5) * camera.viewport.w;
   position = vec4f(position.xy + normal * select(-1.0, 1.0, (corner & 1u) != 0u) *
                    width / camera.viewport.xy * position.w, position.zw);
-  let color = mix(vec3f(0.22, 0.84, 0.88), vec3f(0.52, 0.71, 1.0), radial);
+  let color = mix(camera.inner_color.rgb, camera.outer_color.rgb, radial);
   let alpha = select(0.12 + 0.35 * radial, 0.78, radial >= 1.0);
-  let line_color = select(vec4f(color, alpha), vec4f(1.0, 0.714, 0.365, 1.0), radial < 0.0);
-  return Vertex(position, select(line_color, vec4f(1.0, 0.49, 0.29, 0.9), radial < -1.5));
+  let line_color = select(vec4f(color, alpha), vec4f(camera.section_color.rgb, 1.0), radial < 0.0);
+  return Vertex(position, select(line_color, vec4f(camera.coil_color.rgb, 0.9), radial < -1.5));
 }
 @fragment fn fragment_main(vertex: Vertex) -> @location(0) vec4f { return vertex.color; }
 `;
@@ -111,7 +112,7 @@ class CumesOrbitRenderer {
 
   constructor(canvas, device) {
     this.canvas = canvas; this.device = device; this.layers = [];
-    this.buffers = new Set(); this.camera = new Float32Array(8);
+    this.buffers = new Set(); this.camera = new Float32Array(24);
   }
 
   buffer(previous, bytes, usage, label) {
@@ -142,7 +143,7 @@ class CumesOrbitRenderer {
       depthStencil: {format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'less-equal'},
       multisample: {count: 4}
     });
-    this.cameraBuffer = this.buffer(null, 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'orbit camera');
+    this.cameraBuffer = this.buffer(null, this.camera.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, 'orbit camera');
     this.radiusBuffer = this.buffer(null, 16, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC, 'orbit bounds');
     this.cameraGroup = device.createBindGroup({layout: this.pipeline.getBindGroupLayout(0), entries: [
       {binding: 0, resource: {buffer: this.cameraBuffer}}, {binding: 1, resource: {buffer: this.radiusBuffer}}
@@ -257,6 +258,16 @@ class CumesOrbitRenderer {
     const dpr = Math.min(2, devicePixelRatio || 1, limit / rect.width, limit / rect.height);
     const width = Math.max(1, Math.round(rect.width * dpr)), height = Math.max(1, Math.round(rect.height * dpr));
     this.resize(width, height);
+    const theme = this.canvas.ownerDocument.documentElement.dataset.theme;
+    if (this.theme !== theme) {
+      const style = getComputedStyle(this.canvas);
+      // The shared palette defines six-digit sRGB hex colors for both themes.
+      ['--cyan', '--blue', '--orange', '--coil-color'].forEach((name, i) => {
+        const hex = style.getPropertyValue(name).trim();
+        this.camera.set([1, 3, 5].map(start => parseInt(hex.slice(start, start + 2), 16) / 255), 8 + 4 * i);
+      });
+      this.theme = theme;
+    }
     this.camera.set([Math.cos(state.yaw), Math.sin(state.yaw), Math.cos(state.pitch), Math.sin(state.pitch), width, height, state.zoom, dpr]);
     this.device.queue.writeBuffer(this.cameraBuffer, 0, this.camera);
     const pass = encoder.beginRenderPass({
@@ -340,6 +351,7 @@ function installOrbitRenderer(canvas, fourier) {
       if (!event.persisted) { state.disposed = true; observer.disconnect(); state.renderer?.destroy(); }
     });
     addEventListener('pageshow', () => queueOrbitDraw(canvas));
+    canvas.ownerDocument.addEventListener('cumes-theme-change', () => queueOrbitDraw(canvas));
     startOrbitRenderer(canvas, state);
   }
   canvas.cumesOrbit.fourier = fourier;

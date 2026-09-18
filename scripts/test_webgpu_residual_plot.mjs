@@ -13,7 +13,10 @@ const canvas={width:0,height:0,getContext:()=>context,getBoundingClientRect:()=>
 const caption={textContent:''};
 const doc={visibilityState:'visible',addEventListener(name,fn){events[name]=fn}};
 const panel={ownerDocument:doc,querySelector:s=>s==='canvas'?canvas:caption,querySelectorAll:()=>outputs};
+const palette={'--cyan':'#007f82','--blue':'#536d9c','--orange':'#bb6438',
+  '--muted':'#626e73','--grid':'#e1e4df','--restart':'#b04c78','--sans':'sans-serif'};
 const sandbox=vm.createContext({panel,performance:{now:()=>0},devicePixelRatio:2,
+  getComputedStyle:()=>({getPropertyValue:name=>palette[name]}),
   setTimeout(fn,delay){assert.equal(delay,100);jobs.set(++id,fn);return id},clearTimeout:id=>jobs.delete(id),
   requestAnimationFrame(fn){frames.set(++id,fn);return id},cancelAnimationFrame:id=>frames.delete(id),
   ResizeObserver:class {constructor(fn){resize=fn}observe(target){assert.equal(target,canvas)}}});
@@ -85,7 +88,7 @@ assert.deepEqual(Array.from(restartPlot.report().samples,r=>r.x),[2,3,6]);
 assert.deepEqual(Array.from(restartPlot.report().stages,r=>r.x),[1,5]);
 assert.match(caption.textContent,/5 restarts/);assert.match(caption.textContent,/Pink vertical lines: restarts/);
 // The marker segment is solid, full-height, and independent of residual sampling.
-const markerStart=calls.findIndex(c=>c[0]==='strokeStyle'&&c[1]==='#ed88b8');
+const markerStart=calls.findIndex(c=>c[0]==='strokeStyle'&&c[1]===palette['--restart']);
 assert.ok(markerStart>=0);
 const markerCalls=calls.slice(markerStart,markerStart+22);
 assert.deepEqual(Array.from(markerCalls[1][1]),[]);
@@ -93,6 +96,13 @@ assert.deepEqual(markerCalls.filter(c=>c[0]==='moveTo').map(c=>c.slice(1)),[1,2,
 assert.deepEqual(markerCalls.filter(c=>c[0]==='lineTo').map(c=>c.slice(1)),[1,2,4,5,6].map(x=>[62+x/10*560,212]));
 const restartReport=restartPlot.report();restartReport.restarts[0].x=999;
 assert.equal(restartPlot.report().restarts[0].x,1);
+const configuredPlot=sandbox.createCumesResidualPlot(panel,1e-12);
+configuredPlot.setTolerance(2e-4);calls.length=0;tick();
+assert.ok(calls.some(c=>c[0]==='fillText'&&c[1]==='target 2e-4'));
+assert.equal(configuredPlot.report().minLog,-5);
+configuredPlot.append({...sample(1),tolerance:2e-4});
+configuredPlot.setTolerance(1e-12);
+assert.equal(configuredPlot.report().samples[0].tolerance,2e-4,'Changing setup must retain the completed history');
 // Exercise the actual Emscripten scalar import and its payload (not log parsing).
 const library={};let emitted;
 vm.runInNewContext(readFileSync(new URL('../webgpu/browser_bridge.js',import.meta.url),'utf8'),{

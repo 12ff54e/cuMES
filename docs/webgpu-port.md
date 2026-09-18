@@ -17,11 +17,59 @@ boundary**. There is one Run/Stop workflow, precision control, residual plot,
 and result download. Historical `?solve=w7x` links open the fixed W7-X editor;
 `?preset=w7x` is the current link. Neither starts a solve until Run is clicked.
 The fixed W7-X preset keeps its single-grid default and combined iteration
-budget; **Resolution, profiles and input JSON** also offers multigrid.
+budget. **Radial grid stages** exposes the stage count and the number of radial
+grid points in each stage for every fixed/free-boundary preset. Changing the
+count evenly spaces the grids up to the current final grid; the final stage's
+step cap and tolerance are retained, and added stages inherit its limits.
+Grid sizes must be strictly increasing integers from 3 to 512.
 
-Run, Stop and edit, Reset, and Download share a toolbar above the workspace
-that remains visible while scrolling. During a solve it shows recent completed
-iterations per second, updated about twice per second from the existing pass
+The editor panel has two tabs: **Input boundary** (**Initial plasma boundary**
+in free-boundary mode) and **Radial grid stages**. Only the selected tab takes
+space in the panel. Precision controls and the Run toolbar remain available in
+both views. Switching tabs retains edits; the selection survives Run/Stop and
+reloads within the browser tab. Arrow keys, Home and End navigate the tab bar.
+Run reveals invalid settings in the stage tab. Uploading a new JSON file opens
+its boundary tab.
+
+**Input JSON preview** is a collapsed, read-only view available in both tabs
+for every fixed/free-boundary setup. It follows the controls and shows the
+complete solver input, including free-boundary coil currents, coil file and
+field-grid parameters. **Copy JSON** copies the formatted input to the
+clipboard; if clipboard access fails, the text is selected for manual copying.
+Invalid edits clear the preview and disable copying until corrected. The
+preview remains available during a solve. To edit profiles or angular
+resolution, upload a revised input JSON file.
+
+**Step caps and tolerances** is collapsed initially. Its sync checkbox copies
+stage 1's cap and tolerance to all stages; while checked, editing either value
+in any stage updates that value everywhere. Unchecking it permits independent
+limits. The controls edit `ns_array`, `niter_array`, and `ftol_array` in the
+input, and Run uses those values without replacing the tolerances.
+Default tolerances follow precision switches (`1e-5` single, `1e-12` paired);
+custom tolerances are retained, with an error if they violate the selected
+precision's input floor (`1e-6` single, `1e-16` paired). These floors are input
+constraints, not convergence guarantees. Stage settings and the sync choice
+survive reloads, and the stage controls are locked during a solve.
+
+**Upload input JSON** reads a local cuMES input file and opens it for editing
+without starting a solve. Fixed-boundary files use a separate **Uploaded JSON**
+setup, preserving the complete coefficients, profiles, angular resolution and
+stage arrays; built-in presets keep their own saved settings. Uploaded settings
+survive reloads, and Reset in this setup restores the original uploaded input.
+The file's `lfreeb` selects the boundary mode. Tolerances below `1e-6` select
+paired precision without relaxing the requested values. Malformed JSON or
+invalid boundary/stage structure leaves the current setup in place; the shared
+solver config API validates profiles, unknown keys and physics on Run.
+
+Free-boundary JSON must include `extcur` and inline `makegrid_parameters`.
+References to bundled `coils.solovev`, `coils.w7x`, or `coils.cth_like` are mapped
+to browser assets. For a custom coil reference, upload the matching coil file
+in Free boundary first, then upload the input JSON. External field-grid files
+are unsupported in this upload path; the browser generates its grid from coils.
+
+Run, Stop and edit, Reset, Upload input JSON, and Download share a toolbar above
+the workspace that remains visible while scrolling. During a solve it shows
+recent completed iterations per second, updated about twice per second from the existing pass
 timing events. The rate includes GPU waits and vacuum work, counts completed
 passes through restarts, and resets at each grid so startup, MAKEGRID, and grid
 setup do not enter the estimate. It remains available with `timing=0` and adds
@@ -74,9 +122,9 @@ inputs. The separate W7-X startup implementation has been removed.
 surfaces with WebGPU. A compute shader reconstructs the full torus from the
 six/twelve physical Fourier families and reduces its bounding radius. Geometry,
 bounds, and line indices stay on the GPU; changing the camera uploads one
-32-byte uniform. Coefficient edits regenerate geometry, while moving the
-section slider updates only the highlighted line. Every supplied surface is
-drawn, without the previous CPU renderer's surface subsampling.
+96-byte camera/palette uniform. Coefficient edits regenerate geometry, while
+moving the section slider updates only the highlighted line. Every supplied
+surface is drawn, without the previous CPU renderer's surface subsampling.
 
 Vertex and fragment shaders draw instanced line ribbons with consistent screen
 widths, transparent colors, and 4x multisampling. The view retains transparent
@@ -452,6 +500,14 @@ After upgrading from a build that predates this scheme, use one hard refresh
 or add any one-time query parameter to the HTML URL; subsequent rebuilds are
 cache-coherent automatically.
 
+The interface uses the presentation palette and typography from `cumes-materials`:
+warm paper, teal and terracotta accents, Biolinum controls, Libertine explanatory
+text, and Fira Code numerical inputs. The header's **Dark theme** toggle selects a
+neutral grey theme and remembers it across reloads; new sessions without a saved
+preference start in light mode. Boundary plots, residual histories, and the 3-D
+viewer follow the selected theme without restarting the solver. Fonts load from
+pinned CDN releases, with local serif/sans-serif/monospace fallbacks.
+
 In the Solovev preset, **Fourier** mode exposes `RBC(0,m)` for `m=0..5` and `ZBS(0,m)`
 for `m=1..5` as sliders beside a live boundary preview. In **Contour** mode,
 the default 16 points define a periodic Catmull-Rom contour; dragging one point
@@ -469,6 +525,21 @@ pointer drags and solves for both tokamak parities in the forwarded Chrome.
 It also checks asymmetric vertical offsets, retained profiles, reloads,
 precision changes, poloidal resolution changes and the Fourier-only 3-D path.
 Its temporary tab uses session storage and is closed after the checks.
+
+`node scripts/webgpu_stages_smoke.mjs APP_URL OUTPUT_PREFIX` checks setup tabs,
+keyboard navigation, hidden-stage validation, stage count, independent and
+synced limits, precision changes, reloads, and JSON round trips
+for fixed/free presets. It runs custom scalar, paired and free-boundary schedules,
+verifies the solver's per-stage tolerances and final radial resolution, and
+checks that a one-step cap stops the solve. Its temporary tab also uses session
+storage and closes after the checks; screenshots include desktop and mobile
+stage controls.
+
+`node scripts/webgpu_input_upload_smoke.mjs APP_URL OUTPUT_PREFIX` exercises the
+file input with fixed, 3-D, asymmetric and free-boundary JSON files, including
+malformed/canceled uploads, saved setup isolation, reload/reset, and precision
+selection. It also runs imported fixed/free equilibria and checks mobile layout
+in a temporary tab with session storage, which it closes after the checks.
 
 After convergence the result panel defaults to an interactive 3-D equilibrium
 view, with a **2D cut** toggle for the poloidal cross-section. The solver sends
@@ -670,8 +741,9 @@ limit. Omitting the preference argument tests an unmodified Firefox profile.
 
 The W7-X page has a **Single / Double** precision switch above the log;
 the boundary editor has the same switch alongside its run controls.
-Single selects scalar f32 (`1e-5`); Double selects the existing paired-f32
-mode (`1e-12`), not native IEEE fp64. Switching restarts an existing editor solve
+Single selects scalar f32 (default tolerance `1e-5`); Double selects the existing
+paired-f32 mode (default `1e-12`), not native IEEE fp64. Switching restarts an
+existing editor solve
 (an idle editor stays idle); W7-X returns to setup and waits for **Start**.
 Both preserve the other URL options, including radial grids and FFT selection.
 The current precision is also published as `data-cumes-precision` on the
