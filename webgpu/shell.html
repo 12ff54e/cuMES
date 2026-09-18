@@ -495,8 +495,9 @@
       const fit=Array.from({length:161},(_,i)=>pointAt(2*Math.PI*i/160)),target=editorMode==='contour'?
         Array.from({length:161},(_,i)=>contourAt(2*Math.PI*i/160)):fit;
       boundaryProjection=projection([...fit,...target],600,520,65);drawGrid(svg,600,520);
-      if(editorMode==='contour')svg.append(node('path',{d:pathData(target,boundaryProjection.map),class:'contour-target'}));
       svg.append(node('path',{d:pathData(fit,boundaryProjection.map),class:'boundary'}));
+      // Keep the target above the filled fit, with the draggable handles on top.
+      if(editorMode==='contour')svg.append(node('path',{d:pathData(target,boundaryProjection.map),class:'contour-target'}));
       if(editorMode==='contour'){ensureContour();for(let i=0;i<shape.contour.length;i++){const[x,y]=boundaryProjection.map(shape.contour[i]);
         svg.append(node('circle',{cx:x,cy:y,r:6,class:'handle','data-index':i}))}value('fit-error').textContent=`RMS fit error: ${contourFitError().toExponential(2)} m`}
       saveContourState()}
