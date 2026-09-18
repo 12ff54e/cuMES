@@ -60,10 +60,12 @@ The file's `lfreeb` selects the boundary mode. Tolerances below `1e-6` select
 paired precision without relaxing the requested values. Malformed JSON or
 invalid boundary/stage structure leaves the current setup in place; the shared
 solver config API validates profiles, unknown keys and physics on Run.
+Omitting `mpol` uses the solver default of 6.
 
 Free-boundary JSON must include `extcur` and inline `makegrid_parameters`.
 References to bundled `coils.solovev`, `coils.w7x`, or `coils.cth_like` are mapped
-to browser assets. For a custom coil reference, upload the matching coil file
+to browser assets unless they match the currently uploaded coil file, which
+takes precedence. For a custom coil reference, upload the matching coil file
 in Free boundary first, then upload the input JSON. External field-grid files
 are unsupported in this upload path; the browser generates its grid from coils.
 

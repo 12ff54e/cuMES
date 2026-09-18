@@ -21,6 +21,7 @@ function readCumesInputJSON(source, precision) {
       throw Error(`${key} must be true or false.`);
   // Reuse the editor checks before replacing a saved setup. The shared solver
   // config API validates profiles, unknown keys and physics when Run is selected.
+  if (input.mpol === undefined) input.mpol = 6; // ProblemSpec::mpol
   boundaryFourier(input);
   const stages = cumesValidateStages(input, 'double');
   if (stages.ftol_array.some(tolerance => tolerance < 1e-6)) precision = 'double';
@@ -209,7 +210,11 @@ function installCumesStageEditor(root, precision, storageKey, onChange, onRefres
   }
   function read(next = precision) {
     try { return next === precision ? cumesValidateStages(raw(), precision) : cumesStagePrecision(raw(), precision, next); }
-    catch (failure) { showError(failure.message); throw failure; }
+    catch (failure) {
+      // A rejected precision switch does not invalidate the current schedule.
+      if (next === precision) showError(failure.message);
+      throw failure;
+    }
   }
   function commit() {
     try { const stages = read(); onChange(stages); onRefresh(stages); showError(''); return true; }

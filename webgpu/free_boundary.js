@@ -23,10 +23,11 @@ function cumesFreeInputConfig(input, saved) {
     throw Error('Free-boundary uploads need inline makegrid_parameters; the browser generates the field grid from coils.');
   const basename = path => typeof path === 'string' ? path.replaceAll('\\', '/').split('/').at(-1) : '';
   const name = basename(input.coils_file);
-  const preset = name.match(/^coils\.(solovev|w7x|cth_like)$/)?.[1];
-  if (preset) return {preset, input:{...input, coils_file:'/inputs/coils.' + preset}};
+  // An explicitly uploaded file can share a name with a bundled preset.
   if (name && saved?.preset === 'upload' && [saved.coilName, basename(saved.input?.coils_file)].includes(name))
     return {preset:'upload', coilName:saved.coilName, input:{...input, coils_file:saved.input.coils_file}};
+  const preset = name.match(/^coils\.(solovev|w7x|cth_like)$/)?.[1];
+  if (preset) return {preset, input:{...input, coils_file:'/inputs/coils.' + preset}};
   throw Error('Upload the referenced coil file in Free boundary, then upload this input JSON again.');
 }
 

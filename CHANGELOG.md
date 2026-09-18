@@ -5,6 +5,18 @@ All notable changes to cuMES are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.8.1] - 2026-09-18
+
+### Fixed
+
+- Free-boundary JSON uploads prefer a matching uploaded coil file over a
+  bundled preset with the same filename, preserving the selected geometry.
+- Input JSON uploads accept an omitted `mpol` and use the solver default of 6
+  while retaining the remaining input settings.
+- Rejected precision switches leave the current valid input JSON preview and
+  Copy JSON button available. Precision warnings are separate from stage
+  validation errors and clear when settings are corrected.
+
 ## [1.8.0] - 2026-09-18
 
 ### Added

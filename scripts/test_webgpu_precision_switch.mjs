@@ -9,9 +9,9 @@ assert(begin>=0&&end>begin);
 const context=vm.createContext({URL});
 vm.runInContext(shell.slice(begin,end),context);
 
-function setup(search){
+function setup(search,beforeSwitch=()=>{}){
   const nodes=new Map();
-  for(const id of ['', 'editor-'].flatMap(prefix=>['precision-control','precision-single','precision-double','precision-tolerance'].map(id=>prefix+id))){
+  for(const id of ['', 'editor-'].flatMap(prefix=>['precision-control','precision-single','precision-double','precision-tolerance','precision-error'].map(id=>prefix+id))){
     const node={hidden:true,attributes:{},active:false,
       setAttribute(key,value){this.attributes[key]=value},
       addEventListener(event,callback){assert.equal(event,'click');this.click=callback}};
@@ -20,7 +20,7 @@ function setup(search){
   }
   const document={body:{dataset:{}},getElementById:id=>nodes.get(id)};
   const location={href:`https://example.test/cumes.html${search}`,assign(url){this.assigned=url}};
-  context.installPrecisionSwitch(document,location,()=>{location.prepared=true});
+  context.installPrecisionSwitch(document,location,()=>{location.prepared=true;return beforeSwitch()});
   return{nodes,document,location};
 }
 for(const initial of ['', '&precision=double','&precision=float']){
@@ -60,6 +60,17 @@ for(const search of ['?mode=test']){
   assert.equal(nodes.get('precision-single').click,undefined);
 }
 console.log('Precision switch: PASS (defaults, both directions, active no-op, URL preservation, scope)');
+
+{
+  const {nodes,document,location}=setup('?precision=double',()=>false);
+  nodes.get('editor-precision-single').click();
+  assert.equal(location.assigned,undefined,'A rejected switch must not navigate');
+  assert.equal(document.body.dataset.cumesPrecision,'double');
+  nodes.get('editor-precision-error').textContent='Could not change precision';
+  nodes.get('editor-precision-double').click();
+  assert.equal(nodes.get('editor-precision-error').textContent,'','Selecting the current precision dismisses the warning');
+  assert.equal(location.assigned,undefined);
+}
 
 for(const search of ['?boundary=free','?boundary=free&run=1','?boundary=free&precision=float']){
   const f=setup(search);

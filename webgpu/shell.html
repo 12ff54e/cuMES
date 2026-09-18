@@ -241,8 +241,8 @@
     .stage-settings summary { padding-left:4px; padding-right:4px; }
     .stage-sync-label { display:flex; align-items:flex-start; gap:8px; }
     .stage-sync-label input { margin:4px 0 0; }
-    #stage-error { color:var(--danger); font-size:14px; }
-    #stage-error:empty { display:none; }
+    #stage-error,#editor-precision-error { color:var(--danger); font-size:14px; }
+    #stage-error:empty,#editor-precision-error:empty { display:none; }
     #boundary-error { color:var(--danger); font-size:14px; margin:0 0 14px; }
     #boundary-error:empty { display:none; }
     #input-upload-status { margin:0; padding:14px 22px; overflow-wrap:anywhere; }
@@ -376,6 +376,7 @@
               <button type="button" id="editor-precision-double" aria-pressed="false">Double · paired f32</button>
             </div>
             <span class="tag" id="editor-precision-tolerance"></span>
+            <p id="editor-precision-error" role="status"></p>
             <p>Double uses two f32 words, not native IEEE fp64. Changing precision during a solve restarts it; your setup is retained.</p><p id="free-precision-note" hidden>Paired precision is recommended for free-boundary solves. Single precision is experimental and can stall on W7-X.</p>
           </section>
         </div>
@@ -469,6 +470,7 @@
         button.classList.toggle('active',active);
         button.setAttribute('aria-pressed',String(active));
         button.addEventListener('click',()=>{
+          document.getElementById(prefix+'precision-error').textContent='';
           if(precision===selected)return;
           const next=new URL(location.href);
           next.searchParams.set('precision',precision);
@@ -481,7 +483,7 @@
     installPrecisionSwitch(document,location,precision=>{if(appMode){try{
       if(stageEditor)writeStageSettings(stageEditor.read(precision));
       saveSurfaceInput();localStorage.setItem('cumes.input.v1',inputJSON());
-    }catch(error){stageEditor?.showError(error.message);return false}}});
+    }catch(error){value('editor-precision-error').textContent='Could not change precision: '+error.message;return false}}});
     const MAX_M=5,CONTOUR_POINTS=16,TRANSFORM_SAMPLES=512;
     const defaults={r:[3.999,1.026,-.068,0,0,0],z:[0,1.580,.010,0,0,0],pressure:.125};
     const editorStorageKey=(asymmetricPreset||uploadedPreset)?fixedStorageKey+'.editor':'cumes.editor.v1';
@@ -787,6 +789,7 @@
     function prepareStageEditor(){
       stageEditor=installCumesStageEditor(value('stage-settings'),document.body.dataset.cumesPrecision,stageSyncStorageKey,
         stages=>{writeStageSettings(stages);invalidateResult()},stages=>{
+          value('editor-precision-error').textContent='';
           const tolerances=stages.ftol_array,same=tolerances.every(v=>v===tolerances[0]);
           value('editor-precision-tolerance').textContent=`${same?'Tolerance':'Final tolerance'}: ${tolerances.at(-1).toExponential()}`;
           window.cumesResidualPlot?.setTolerance(tolerances[0]);

@@ -13,11 +13,12 @@ const asymmetric = await fixture('../inputs/asymmetric_tokamak.json');
 const free = {...await fixture('../webgpu/presets/solovev.json'), ns_array:[8], niter_array:[2000], ftol_array:[1e-4]};
 const browser = await (await fetch(`http://127.0.0.1:${process.env.CUMES_CDP_PORT || 9333}/json/version`)).json();
 const cdp = await connectCdp(browser.webSocketDebuggerUrl);
-let target;
+const coilDatabase = `cumes-coils-upload-smoke-${process.pid}-${Date.now()}`;
+let target, call;
 try {
   target = (await cdp.call('Target.createTarget', {url:'about:blank',newWindow:false})).targetId;
   const session = (await cdp.call('Target.attachToTarget', {targetId:target,flatten:true})).sessionId;
-  const call = (method, params = {}) => cdp.call(method, params, session);
+  call = (method, params = {}) => cdp.call(method, params, session);
   const evaluate = async expression => {
     const result = await call('Runtime.evaluate', {expression,returnByValue:true,awaitPromise:true});
     if (result.exceptionDetails) throw Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
@@ -89,6 +90,8 @@ try {
   await call('Page.enable');
   await call('Page.addScriptToEvaluateOnNewDocument', {source:`
     Object.defineProperty(window,'localStorage',{get:()=>window.sessionStorage});
+    const openDatabase=indexedDB.open.bind(indexedDB);
+    indexedDB.open=(name,...args)=>openDatabase(name==='cumes-coils'?${JSON.stringify(coilDatabase)}:name,...args);
     // Capture writes in this tab instead of replacing the user's clipboard.
     Object.defineProperty(navigator,'clipboard',{value:{async writeText(text){
       if(window.cumesCopyFailure)throw Error('Clipboard denied');
@@ -129,7 +132,9 @@ try {
   }
   await evaluate(`document.getElementById('input-upload').files=new DataTransfer().files;document.getElementById('input-upload').dispatchEvent(new Event('change'))`);
   assert.deepEqual(await input(), original, 'Canceling the file chooser leaves the input alone');
-  await upload('input.json', '\uFEFF' + JSON.stringify(solovev));
+  const {mpol, ...implicitMpol} = solovev;
+  assert.equal(mpol, 6);
+  await upload('input.json', '\uFEFF' + JSON.stringify(implicitMpol));
   assert.deepEqual(await input(), {...solovev,lfreeb:false});
   assert.equal(await evaluate(`localStorage.getItem('cumes.editor.v1')`), savedEditor);
   assert.equal(await evaluate(`document.getElementById('fixed-preset').value`), 'upload');
@@ -149,6 +154,23 @@ try {
   assert.equal(await evaluate('document.body.dataset.cumesPrecision'), 'double');
   assert.equal(await evaluate('surfaceEditor.fourier.ntor'), w7x.ntor);
   assert.equal(await evaluate('contourAvailable()'), false);
+  const strictW7x = {...w7x,ftol_array:[1e-8,...w7x.ftol_array.slice(1)]};
+  await evaluate(`document.getElementById('editor-tab-stages').click();document.getElementById('stage-limits').open=true;
+    const tolerance=document.querySelector('[data-stage-key="ftol_array"]');tolerance.value='1e-8';tolerance.dispatchEvent(new Event('input',{bubbles:true}))`);
+  await evaluate(`document.getElementById('editor-precision-single').click()`);
+  assert.equal(await evaluate('document.body.dataset.cumesPrecision'), 'double');
+  assert.match(await evaluate(`document.getElementById('editor-precision-error').textContent`), /single precision/);
+  assert.equal(await evaluate(`document.getElementById('stage-error').textContent`), '');
+  assert.deepEqual(await input(), {...strictW7x,lfreeb:false});
+  await preview();
+  await evaluate(`document.getElementById('editor-precision-double').click()`);
+  assert.equal(await evaluate(`document.getElementById('editor-precision-error').textContent`), '');
+  await evaluate(`document.getElementById('editor-precision-single').click()`);
+  await evaluate(`(() => {const tolerance=document.querySelector('[data-stage-key="ftol_array"]');
+    tolerance.value=${JSON.stringify(String(w7x.ftol_array[0]))};tolerance.dispatchEvent(new Event('input',{bubbles:true}))})()`);
+  assert.equal(await evaluate(`document.getElementById('editor-precision-error').textContent`), '', 'Correcting the schedule clears the precision warning');
+  assert.deepEqual(await input(), {...w7x,lfreeb:false});
+  console.log('PASS: rejected precision switches preserve input, preview and copying; warnings clear after correction');
   await preset('solovev');
   await evaluate(`document.getElementById('editor-precision-single').click()`);
   await wait(`document.body?.dataset.cumesPrecision==='float' && document.body.dataset.cumesWebgpu==='ready'`);
@@ -190,6 +212,23 @@ try {
   await call('Page.reload'); await ready(); assert.deepEqual(await input(), free);
   await solve('free');
   assert.equal(await evaluate('document.body.dataset.cumesExecution'), 'worker');
+  const coilSource = await readFile(new URL('../deps/vacuum-field/tests/data/coils.solovev', import.meta.url), 'utf8');
+  const modifiedCoils = coilSource.replace('0.867845', '0.900000');
+  assert.notEqual(modifiedCoils, coilSource, 'Use different geometry under the bundled filename');
+  await evaluate(`(() => {
+    const transfer=new DataTransfer();transfer.items.add(new File([${JSON.stringify(modifiedCoils)}],'coils.solovev'));
+    const control=document.getElementById('coil-upload');control.files=transfer.files;control.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  await wait(`document.getElementById('coil-preset').value==='upload' && document.getElementById('coil-status').textContent.startsWith('Uploaded.')`);
+  const geometry = await evaluate('boundaryMode.geometry()');
+  await upload('modified-free.json', {...free,coils_file:'../modified/coils.solovev'});
+  assert.equal(await evaluate(`document.getElementById('coil-preset').value`), 'upload');
+  assert.deepEqual(await input(), {...free,coils_file:'/inputs/coils.upload'});
+  assert.deepEqual(await evaluate('boundaryMode.geometry()'), geometry);
+  await call('Page.reload'); await ready();
+  const retained = await evaluate(`(async()=>{const [file]=await boundaryMode.files();return {path:file.path,source:new TextDecoder().decode(file.bytes)}})()`);
+  assert.deepEqual(retained, {path:'/inputs/coils.upload',source:modifiedCoils}, 'Preview and solver must retain the uploaded bytes across JSON import and reload');
+  console.log('PASS: matching uploaded coil geometry and solver bytes take precedence over a bundled filename');
   await evaluate(`document.getElementById('coil-preset').value='cth_like';document.getElementById('coil-preset').dispatchEvent(new Event('change',{bubbles:true}))`);
   await wait(`document.getElementById('coil-status').textContent.startsWith('Coils ready') && JSON.parse(inputJSON()).coils_file==='/inputs/coils.cth_like'`);
   await preview();
@@ -204,6 +243,14 @@ try {
   await writeFile(`${prefix}-mobile.png`, Buffer.from(screenshot.data,'base64'));
   console.log('PASS: JSON preview/copy, invalid/canceled uploads, full fixed/3-D/asymmetric/free input retention, precision selection, presets, reload/reset, busy controls and mobile layout');
 } finally {
-  if (target) await cdp.call('Target.closeTarget', {targetId:target});
-  cdp.close();
+  try {
+    if (target) {
+      try {
+        await call('Runtime.evaluate', {expression:`new Promise((resolve,reject)=>{
+          const request=indexedDB.deleteDatabase(${JSON.stringify(coilDatabase)});
+          request.onsuccess=resolve;request.onerror=()=>reject(request.error);
+        })`,awaitPromise:true});
+      } finally { await cdp.call('Target.closeTarget', {targetId:target}); }
+    }
+  } finally { cdp.close(); }
 }
