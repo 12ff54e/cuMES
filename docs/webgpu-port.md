@@ -452,6 +452,14 @@ After upgrading from a build that predates this scheme, use one hard refresh
 or add any one-time query parameter to the HTML URL; subsequent rebuilds are
 cache-coherent automatically.
 
+The interface uses the presentation palette and typography from `cumes-materials`:
+warm paper, teal and terracotta accents, Biolinum controls, Libertine explanatory
+text, and Fira Code numerical inputs. The header's **Dark theme** toggle selects a
+neutral grey theme and remembers it across reloads; new sessions without a saved
+preference start in light mode. Boundary plots, residual histories, and the 3-D
+viewer follow the selected theme without restarting the solver. Fonts load from
+pinned CDN releases, with local serif/sans-serif/monospace fallbacks.
+
 In the Solovev preset, **Fourier** mode exposes `RBC(0,m)` for `m=0..5` and `ZBS(0,m)`
 for `m=1..5` as sliders beside a live boundary preview. In **Contour** mode,
 the default 16 points define a periodic Catmull-Rom contour; dragging one point

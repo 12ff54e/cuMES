@@ -32,7 +32,7 @@ function createCumesResidualPlot(panel, tolerance) {
   const caption = panel.querySelector('.residual-caption');
   const doc = panel.ownerDocument;
   const rows = [], stages = [], restarts = [];
-  const colors = ['#55d6d0', '#7ca4ff', '#ffb65d'], dashes = [[], [6, 3], [2, 3]];
+  const dashes = [[], [6, 3], [2, 3]];
   let offset = 0, extent = 0, timer = null, frame = null, dirty = true, finished = null;
   let minLog = Math.floor(Math.log10(tolerance)) - 1, maxLog = 0;
   let drawCount = 0, drawMilliseconds = 0;
@@ -68,9 +68,11 @@ function createCumesResidualPlot(panel, tolerance) {
     const last = rows.at(-1), limit = Math.max(10, extent);
     const x = value => left + value / limit * (right - left);
     const y = value => bottom - (Math.log10(value) - minLog) / (maxLog - minLog) * (bottom - top);
-    context.font = '11px ui-monospace, monospace';
+    const style = getComputedStyle(canvas), color = name => style.getPropertyValue(name).trim();
+    const colors = ['--cyan', '--blue', '--orange'].map(color);
+    context.font = '12px ' + color('--sans');
     context.lineWidth = 1; context.setLineDash([]);
-    context.fillStyle = '#9aa9bb'; context.strokeStyle = '#27374b';
+    context.fillStyle = color('--muted'); context.strokeStyle = color('--grid');
     context.textAlign = 'right';
     const step = Math.max(1, Math.ceil((maxLog - minLog) / 6));
     for (let exponent = minLog; exponent <= maxLog; exponent += step) {
@@ -89,16 +91,16 @@ function createCumesResidualPlot(panel, tolerance) {
     context.textAlign = 'left'; context.fillText('Residual · log scale', left, 15);
     const target = last?.tolerance ?? tolerance;
     if (positive(target)) {
-      context.strokeStyle = '#b7c4d6'; context.setLineDash([5, 5]);
+      context.strokeStyle = color('--muted'); context.setLineDash([5, 5]);
       context.beginPath(); context.moveTo(left, y(target)); context.lineTo(right, y(target)); context.stroke();
       context.textAlign = 'right'; context.fillText('target ' + target.toExponential(0), right - 3, y(target) - 5);
     }
     context.save(); context.beginPath(); context.rect(left, top, right - left, bottom - top); context.clip();
-    context.strokeStyle = '#718398'; context.setLineDash([3, 5]);
+    context.strokeStyle = color('--muted'); context.setLineDash([3, 5]);
     for (const stage of stages.slice(1)) {
       context.beginPath(); context.moveTo(x(stage.x), top); context.lineTo(x(stage.x), bottom); context.stroke();
     }
-    context.strokeStyle = '#ed88b8'; context.setLineDash([]);
+    context.strokeStyle = color('--restart'); context.setLineDash([]);
     for (const restart of restarts) {
       context.beginPath(); context.moveTo(x(restart.x), top); context.lineTo(x(restart.x), bottom); context.stroke();
     }
@@ -120,8 +122,9 @@ function createCumesResidualPlot(panel, tolerance) {
       caption.textContent = `${finished === null ? 'Live' : finished ? 'Converged' : 'Stopped'} · grid ${stages.at(-1).stage} · solver iteration ${last.iteration} · ${restarts.length} restarts. Pink vertical lines: restarts; gray dashed: grid changes. Nonpositive/nonfinite values are omitted.`;
       canvas.setAttribute('aria-label', `Residual history, logarithmic scale. ${extent} attempted iterations; ${restarts.length} restarts. FSQR ${last.fsq[0]}, FSQZ ${last.fsq[1]}, FSQL ${last.fsq[2]}.`);
     } else {
-      context.fillStyle = '#9aa9bb'; context.textAlign = 'center';
-      context.fillText('Residuals will appear when the solve starts.', (left + right) / 2, (top + bottom) / 2);
+      context.fillStyle = color('--muted'); context.textAlign = 'center';
+      context.fillText(width < 450 ? 'Run to see residuals.' : 'Residuals will appear when the solve starts.',
+        (left + right) / 2, (top + bottom) / 2);
     }
     dirty = false; ++drawCount; drawMilliseconds += performance.now() - started;
   }
@@ -137,6 +140,8 @@ function createCumesResidualPlot(panel, tolerance) {
   }
   if (globalThis.ResizeObserver) new ResizeObserver(schedule).observe(canvas);
   doc.addEventListener('visibilitychange', schedule);
+  doc.addEventListener('cumes-theme-change', schedule);
+  doc.fonts?.ready.then(schedule);
   schedule();
   return {
     append(sample) {
