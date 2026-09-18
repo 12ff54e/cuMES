@@ -28,14 +28,23 @@ in free-boundary mode) and **Radial grid stages**. Only the selected tab takes
 space in the panel. Precision controls and the Run toolbar remain available in
 both views. Switching tabs retains edits; the selection survives Run/Stop and
 reloads within the browser tab. Arrow keys, Home and End navigate the tab bar.
-Run reveals invalid settings in the stage tab; live JSON editing keeps its
-focus. Uploading a new JSON file opens its boundary tab.
+Run reveals invalid settings in the stage tab. Uploading a new JSON file opens
+its boundary tab.
+
+**Input JSON preview** is a collapsed, read-only view available in both tabs
+for every fixed/free-boundary setup. It follows the controls and shows the
+complete solver input, including free-boundary coil currents, coil file and
+field-grid parameters. **Copy JSON** copies the formatted input to the
+clipboard; if clipboard access fails, the text is selected for manual copying.
+Invalid edits clear the preview and disable copying until corrected. The
+preview remains available during a solve. To edit profiles or angular
+resolution, upload a revised input JSON file.
 
 **Step caps and tolerances** is collapsed initially. Its sync checkbox copies
 stage 1's cap and tolerance to all stages; while checked, editing either value
 in any stage updates that value everywhere. Unchecking it permits independent
-limits. The controls and input JSON edit the same `ns_array`, `niter_array`, and
-`ftol_array`, and Run uses those values without replacing the tolerances.
+limits. The controls edit `ns_array`, `niter_array`, and `ftol_array` in the
+input, and Run uses those values without replacing the tolerances.
 Default tolerances follow precision switches (`1e-5` single, `1e-12` paired);
 custom tolerances are retained, with an error if they violate the selected
 precision's input floor (`1e-6` single, `1e-16` paired). These floors are input

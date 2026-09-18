@@ -248,8 +248,11 @@
     #input-upload-status { margin:0; padding:14px 22px; overflow-wrap:anywhere; }
     #input-upload-status:empty { display:none; }
     #input-upload-status.error { color:var(--danger); }
-    #equilibrium-settings { padding:0 12px 12px; }
+    #equilibrium-settings { margin:0 0 18px; padding:0 12px 12px; }
     #equilibrium-settings p { color:var(--muted); font:16px/1.5 var(--serif); }
+    .input-preview-actions { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-top:10px; }
+    #input-copy-status { color:var(--muted); font-size:14px; overflow-wrap:anywhere; }
+    #input-copy-status.error { color:var(--danger); }
     [hidden] { display:none!important; }
     @media(max-width:1100px) { .header-actions{gap:18px} .page{width:calc(100% - 48px)} .boundary-choice>.subtitle{margin-left:0;flex-basis:100%} }
     @media(max-width:920px) { .page{width:min(100% - 40px,700px)} .workspace{grid-template-columns:1fr}
@@ -327,11 +330,6 @@
             <p class="subtitle">Edit one toroidal mode at a time. Both views update together. Enable non-stellarator symmetry to edit R sine and Z cosine coefficients.</p>
             <div class="formula">R = Σ [RBC cos(α) + RBS sin(α)]<br>Z = Σ [ZBS sin(α) + ZBC cos(α)], α = mθ − n·NFP·φ</div>
           </section>
-          <details id="equilibrium-settings" hidden><summary>Profiles, angular resolution and input JSON</summary>
-            <p>VMEC input: boundary coefficients, profiles, field periods, resolution and iteration budget. Apply JSON updates the preview; Run uses the edited input.</p>
-            <textarea id="coil-equilibrium" rows="14" aria-label="Equilibrium input JSON" spellcheck="false"></textarea>
-            <button id="apply-equilibrium" class="secondary" type="button">Apply JSON</button>
-          </details>
           <div id="fourier-editor" class="axisymmetric-input">
             <div class="coefficient-columns">
               <section class="harmonic-group"><h3>R cosine coefficients <span>R(θ) = Σ RBC(0,m) cos(mθ)</span></h3><div class="harmonic-controls" id="rbc-controls"></div></section>
@@ -366,6 +364,11 @@
         </section>
         <div class="controls editor-common-controls">
           <p id="boundary-error" role="status"></p>
+          <details id="equilibrium-settings"><summary>Input JSON preview</summary>
+            <p>Current solver input. Use the controls or upload an input JSON file to make changes.</p>
+            <textarea id="coil-equilibrium" rows="12" aria-label="Input JSON preview" spellcheck="false" wrap="off" readonly></textarea>
+            <div class="input-preview-actions"><button id="copy-input-json" class="secondary" type="button" disabled>Copy JSON</button><span id="input-copy-status" role="status">Preparing input JSON…</span></div>
+          </details>
           <section class="precision-control" id="editor-precision-control" aria-label="Solver precision" hidden>
             <span>Precision</span>
             <div class="mode-switch" role="group" aria-label="Select precision">
@@ -492,7 +495,7 @@
       pressure:finite(saved?.pressure,defaults.pressure),contour:savedContour,mode:saved?.mode==='contour'?'contour':'fourier',
       contourPoints:Number.isInteger(saved?.contourPoints)&&saved.contourPoints>=4&&saved.contourPoints%2===0?
         saved.contourPoints:savedContour?.length||CONTOUR_POINTS};
-    let editorMode=shape.mode,surfaceEditor=null,stageEditor=null,inputLoading=false;
+    let editorMode=shape.mode,surfaceEditor=null,surfaceInput=null,stageEditor=null,inputLoading=false,copyingInput=false;
     const advancedEditor=appMode&&(boundaryMode.free||w7xPreset||asymmetricPreset||uploadedPreset);
     const stageSyncStorageKey=(boundaryMode.free?'cumes.free.v1':advancedEditor?fixedStorageKey:editorStorageKey)+'.stage-sync';
     document.body.dataset.surfaceEditor=String(advancedEditor);
@@ -621,6 +624,28 @@
       return JSON.stringify({mpol:6,ntor:0,delt:.9,ncurr:0,nstep:250,...shape.stages,
         am:[shape.pressure,-shape.pressure],ai:[1],raxis_c:[shape.r[0]],zaxis_s:[0],
         rbc:harmonics(shape.r,0),zbs:harmonics(shape.z,1)},null,2)}
+    function refreshInputPreview(){if(!appMode)return null;
+      const preview=value('coil-equilibrium'),button=value('copy-input-json'),status=value('input-copy-status');
+      try{
+        if(value('stage-error').textContent)throw Error(value('stage-error').textContent);
+        for(const control of document.querySelectorAll('#boundary-coefficients input:not(:disabled)'))
+          if(control.value===''||!control.validity.valid)throw Error('Enter finite boundary coefficients to preview the input.');
+        const source=JSON.stringify(JSON.parse(inputJSON()),null,2);
+        if(preview.value!==source||status.classList.contains('error'))status.textContent='';
+        preview.value=source;button.disabled=copyingInput;status.classList.remove('error');return source;
+      }catch(error){preview.value='';button.disabled=true;status.classList.add('error');status.textContent=error.message;return null}
+    }
+    value('equilibrium-settings').addEventListener('toggle',()=>{if(value('equilibrium-settings').open)refreshInputPreview()});
+    value('copy-input-json').addEventListener('click',async()=>{
+      const source=refreshInputPreview();if(source===null)return;
+      const button=value('copy-input-json'),preview=value('coil-equilibrium'),status=value('input-copy-status');
+      copyingInput=true;button.disabled=true;
+      try{await navigator.clipboard.writeText(source);
+        if(preview.value===source)status.textContent='Copied to clipboard.';
+      }catch(_){if(preview.value===source){preview.focus();preview.select();
+        status.textContent='Clipboard unavailable. The JSON is selected; copy it manually.';}}
+      finally{copyingInput=false;button.disabled=!preview.value}
+    });
     value('run')?.addEventListener('click',async()=>{if(value('run').disabled||inputLoading)return;try{await editorReady;
       value('boundary-error').textContent='';
       stageEditor.read();
@@ -724,7 +749,7 @@
       if(data.fourier&&appMode){value('result-switch').hidden=false;installOrbitRenderer(value('result-3d'),data.fourier);showResultMode('3d')}
       else{value('result-switch').hidden=true;showResultMode('2d')}
       if(appMode){value('result-empty').hidden=true;value('iteration').textContent=String(data.iterations);value('fsqr').textContent=Number(data.residual[0]).toExponential(3)}}
-    function invalidateResult(){if(document.body.dataset.cumesWebgpu!=='pass'&&document.body.dataset.cumesWebgpu!=='fail')return;
+    function invalidateResult(){refreshInputPreview();if(document.body.dataset.cumesWebgpu!=='pass'&&document.body.dataset.cumesWebgpu!=='fail')return;
       document.body.dataset.cumesWebgpu='ready';value('status').textContent='Boundary changed';value('run').textContent='Run updated boundary';
       value('iteration').textContent='—';value('fsqr').textContent='—';value('result-plot').replaceChildren();value('result-plot').removeAttribute('hidden');
       resultData=null;resultSection=null;showResultMode('2d');value('result-switch').hidden=true;value('result-empty').hidden=false;
@@ -733,7 +758,7 @@
     window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
     function setEditorDisabled(disabled){document.querySelectorAll('.coefficient-slider,#pressure,#contour-points,.mode-switch button:not([id^="editor-precision-"]):not([id^="boundary-"]),#reset-contour').forEach(control=>control.disabled=disabled);
       value('input-upload-button').disabled=disabled||inputLoading;value('input-upload').disabled=disabled||inputLoading;
-      document.querySelectorAll('#free-boundary-controls textarea,#free-boundary-controls select,#coil-upload-button,#coil-upload,#coil-equilibrium,#apply-equilibrium,#allow-asymmetry,#boundary-coefficients input').forEach(control=>control.disabled=disabled);
+      document.querySelectorAll('#free-boundary-controls textarea,#free-boundary-controls select,#coil-upload-button,#coil-upload,#allow-asymmetry,#boundary-coefficients input').forEach(control=>control.disabled=disabled);
       value('stage-settings').disabled=disabled;
       for(const family of ['zbs','rbs']){const dc=document.querySelector(`#boundary-coefficients input[data-family="${family}"][data-m="0"][data-n="0"]`);if(dc)dc.disabled=true;}
       value('reset').disabled=disabled}
@@ -751,8 +776,8 @@
       syncControls();setEditorMode(editorMode,true)}setEditorDisabled(running);
       if(running){document.body.classList.add('busy');value('run').disabled=true;value('run').textContent='Solving…';value('status').textContent='Requesting GPU';
         value('result-empty').innerHTML='<strong>Computing equilibrium…</strong><span>The equilibrium is computed locally on your machine.</span>'}}
-    function readSurfaceInput(){return JSON.parse(value('coil-equilibrium').value)}
-    function writeSurfaceInput(input){value('coil-equilibrium').value=JSON.stringify(input,null,2);saveSurfaceInput()}
+    function readSurfaceInput(){return boundaryMode.free?boundaryMode.equilibrium():structuredClone(surfaceInput)}
+    function writeSurfaceInput(input){if(boundaryMode.free)boundaryMode.setEquilibrium(input);else surfaceInput=structuredClone(input);saveSurfaceInput()}
     function saveSurfaceInput(){if(!advancedEditor)return;if(boundaryMode.free)boundaryMode.save();
       else localStorage.setItem(fixedStorageKey,JSON.stringify(readSurfaceInput()))}
     function writeStageSettings(stages){
@@ -777,7 +802,7 @@
     }
     function selectUploadedPrecision(url,source){try{
       url.searchParams.set('precision',readCumesInputJSON(source,document.body.dataset.cumesPrecision).precision);
-    }catch(_){/* Keep invalid saved JSON accessible for correction in the editor. */}}
+    }catch(_){/* Keep the saved setup available for correction through its controls. */}}
     value('uploaded-preset').hidden=!localStorage.getItem(uploadStorageKey+'.original');
     value('fixed-preset').value=uploadedPreset?'upload':asymmetricPreset?'asymmetric':w7xPreset?'w7x':'solovev';
     value('fixed-preset-description').textContent=(w7xPreset||asymmetricPreset||uploadedPreset)?'Prescribed plasma boundary':'Drag a contour or tune its harmonics';
@@ -809,7 +834,6 @@
       if(!appMode)return;
       value('surface-editor').hidden=!advancedEditor;value('slice-control').hidden=!advancedEditor;
       value('boundary-editor-mode').hidden=advancedEditor;
-      value('equilibrium-settings').hidden=!advancedEditor;
       value('boundary-title').textContent=boundaryMode.free?'Initial plasma boundary':'Input boundary';
       if(!advancedEditor){prepareStageEditor();return}
       value('run').disabled=true;
@@ -830,7 +854,7 @@
         if(!input){input=structuredClone(w7xGridInput);selectW7xGrids(input,query.get('grids')||(asymmetricPreset?'3':'1'))}
         else if(query.has('grids'))selectW7xGrids(input,query.get('grids'));
         writeSurfaceInput(input);
-        // Grid query parameters initialize setup once; subsequent JSON edits remain authoritative.
+        // Grid query parameters initialize setup once; subsequent stage edits remain authoritative.
         if(query.has('grids')){const next=new URL(location.href);next.searchParams.delete('grids');history.replaceState(null,'',next.href)}
       }
       prepareStageEditor();
@@ -838,16 +862,13 @@
         if(changed){shape.contour=null;invalidateResult()}drawSurfaceBoundary();
       });
       window.cumesBoundaryChanged=()=>{stageEditor.refresh(readSurfaceInput());if(surfaceEditor.refresh()){invalidateResult();drawSurfaceBoundary();setEditorDisabled(running&&document.body.classList.contains('busy'))}};
-      value('apply-equilibrium').addEventListener('click',()=>{try{
-        if(!stageEditor.refresh(readSurfaceInput()))return;
-        shape.contour=null;if(surfaceEditor.refresh()){saveSurfaceInput();invalidateResult();drawSurfaceBoundary()}
-      }catch(error){value('boundary-error').textContent=error.message}});
       if(!surfaceEditor.refresh())throw Error(value('boundary-error').textContent);
       setEditorDisabled(running);value('run').disabled=running;
     }
-    for(const id of ['coil-equilibrium','coil-currents','coil-grid'])value(id).addEventListener('input',invalidateResult);
-    value('coil-equilibrium').addEventListener('input',()=>{shape.contour=null;saveContourState();
-      try{stageEditor?.refresh(readSurfaceInput(),false)}catch(_){}});
+    for(const id of ['coil-currents','coil-grid'])value(id).addEventListener('input',invalidateResult);
+    for(const type of ['input','change'])app.addEventListener(type,event=>{
+      if(event.target.closest('#stage-settings,#boundary-coefficients'))refreshInputPreview();
+    });
     const editorReady=prepareEditor();
     function versionedAsset(path,prefix){
       const runtime=document.getElementById('cumes-runtime').content.querySelector('script');
@@ -867,6 +888,7 @@
     (async()=>{try{
       await globalThis.cumesIsolationReady;
       await editorReady;
+      refreshInputPreview();
       if(appMode&&boundaryMode.free){
         await boundaryMode.ready;
         if(running){

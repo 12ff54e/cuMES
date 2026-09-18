@@ -9,7 +9,7 @@ function fixture(search,saved){
   const get=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',hidden:false,
     classList:{toggle(){}},setAttribute(){},addEventListener(){},click(){}});return nodes.get(id)};
   const location={href:'https://example.test/app/cumes_webgpu.html'+search,search,assign(url){this.next=url}};
-  const context=vm.createContext({URL,URLSearchParams,Uint8Array,location,
+  const context=vm.createContext({URL,URLSearchParams,Uint8Array,structuredClone,location,
     document:{body:{dataset:{}},getElementById:get},
     localStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)},
     async readCumesCoils(file){parsed.push(file.name);return{name:file.name,circuits:[]}},
@@ -34,6 +34,11 @@ assert.equal(f.parsed.length,1,'preview geometry is parsed once per selection');
 assert.equal(files[0].bytes.length,3);
 f.get('coil-currents').value='[1200, -500]';
 assert.deepEqual([...f.app.input().extcur],[1200,-500]);
+const edited=f.app.equilibrium();edited.am=[0.2,-0.2];
+assert.notDeepEqual([...f.app.input().am],edited.am,'Reading equilibrium settings must return an independent copy');
+f.app.setEquilibrium(edited);edited.am[0]=0.4;
+assert.deepEqual([...f.app.input().am],[0.2,-0.2]);
+assert.deepEqual([...f.app.input().extcur],[1200,-500],'Boundary edits must preserve separately edited coil currents');
 f.get('boundary-fixed').onclick();
 const next=new URL(f.location.next);
 assert.equal(next.searchParams.get('boundary'),'fixed');

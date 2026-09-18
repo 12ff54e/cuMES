@@ -77,15 +77,14 @@ function installCumesBoundaryMode() {
     get('input-upload-status').textContent = data.inputName ? 'Loaded ' + data.inputName : '';
     get('coil-preset').value = data.preset;
     get('coil-description').textContent = data.coilName || `coils.${data.preset}`;
-    const {extcur, makegrid_parameters, coils_file, lfreeb, ...equilibrium} = data.input;
+    const {extcur, makegrid_parameters} = data.input;
     get('coil-currents').value = JSON.stringify(extcur);
     get('coil-grid').value = JSON.stringify(makegrid_parameters, null, 2);
-    get('coil-equilibrium').value = JSON.stringify(equilibrium, null, 2);
     globalThis.cumesBoundaryChanged?.();
   }
   function read() {
     if (!config) throw Error('Choose a coil preset or upload a coil file first.');
-    const input = JSON.parse(get('coil-equilibrium').value);
+    const input = structuredClone(config.input);
     input.lfreeb = true;
     input.extcur = JSON.parse(get('coil-currents').value);
     input.makegrid_parameters = JSON.parse(get('coil-grid').value);
@@ -144,7 +143,7 @@ function installCumesBoundaryMode() {
     } catch (failure) { if (token === selection) error(failure.message); }
   };
   get('coil-upload-button').onclick = () => get('coil-upload').click();
-  for (const id of ['coil-currents', 'coil-grid', 'coil-equilibrium']) get(id).addEventListener('change', save);
+  for (const id of ['coil-currents', 'coil-grid']) get(id).addEventListener('change', save);
   if (free && config) show(config);
   const ready = !free ? Promise.resolve() : config ?
     (coilLoad = loadCoils(config, selection)) : preset(namedPreset || 'solovev');
@@ -155,6 +154,8 @@ function installCumesBoundaryMode() {
   get('stop-run').hidden = query.get('run') !== '1';
   return {
     free, ready, save,
+    equilibrium() { return structuredClone(config.input); },
+    setEquilibrium(input) { config.input = structuredClone(input); },
     geometry() { return coilGeometry; },
     input() { config = read(); localStorage.setItem('cumes.free.v1', JSON.stringify(config)); return config.input; },
     async files() {

@@ -1,4 +1,4 @@
-// Exercise File uploads in an isolated tab, including actual fixed/free solves.
+// Exercise input preview, copying and File uploads, including fixed/free solves.
 // Usage: node scripts/webgpu_input_upload_smoke.mjs APP_URL OUTPUT_PREFIX
 import assert from 'node:assert/strict';
 import {readFile, writeFile} from 'node:fs/promises';
@@ -34,6 +34,18 @@ try {
   };
   const ready = () => wait(`document.body?.dataset.cumesWebgpu==='ready' && !document.getElementById('run').disabled`);
   const input = () => evaluate('JSON.parse(inputJSON())');
+  const preview = async () => {
+    const expected = await input();
+    await evaluate(`document.getElementById('equilibrium-settings').open=true`);
+    await wait(`document.getElementById('coil-equilibrium').value && !document.getElementById('copy-input-json').disabled`);
+    const shown = await evaluate(`(() => {const field=document.getElementById('coil-equilibrium');return {source:field.value,readOnly:field.readOnly,disabled:field.disabled,visible:field.getClientRects().length>0}})()`);
+    assert(shown.readOnly && !shown.disabled && shown.visible);
+    assert.equal(shown.source,JSON.stringify(expected,null,2),'Preview must contain the complete current solver input');
+    await evaluate(`window.cumesCopiedJSON=null;document.getElementById('copy-input-json').click()`);
+    await wait(`typeof window.cumesCopiedJSON==='string' && document.getElementById('input-copy-status').textContent==='Copied to clipboard.'`);
+    assert.equal(await evaluate('window.cumesCopiedJSON'),shown.source);
+    assert.deepEqual(await input(),expected,'Preview and copying must preserve solver input');
+  };
   const upload = async (name, source, valid = true) => {
     await evaluate(`(() => {
       const file=new File([${JSON.stringify(typeof source === 'string' ? source : JSON.stringify(source))}],${JSON.stringify(name)},{type:'application/json'});
@@ -47,6 +59,7 @@ try {
       assert.equal(await evaluate('document.body.dataset.cumesExecution'), 'idle');
       assert.equal(await evaluate(`document.getElementById('editor-panel-boundary').hidden`), false, 'Uploads open the boundary tab');
       assert.equal(await evaluate(`new URL(location.href).searchParams.has('run')`), false);
+      await preview();
     } else {
       await wait(`document.getElementById('input-upload-status')?.classList.contains('error') && !inputLoading`);
       assert.equal(await evaluate(`document.getElementById('input-upload').value`), '');
@@ -62,6 +75,7 @@ try {
     await evaluate(`document.getElementById('run').click()`);
     await wait(`document.body?.classList.contains('busy')`);
     assert.equal(await evaluate(`document.getElementById('input-upload-button').disabled && document.getElementById('input-upload').disabled`), true);
+    await preview();
     await wait(`['pass','fail'].includes(document.body?.dataset.cumesWebgpu)`, 300000);
     const result = await evaluate(`({dataset:{...document.body.dataset},input:JSON.parse(inputJSON()),plot:cumesResidualPlot.report(),ns:resultData?.fourier?.ns})`);
     await writeFile(`${prefix}-${name}.json`, JSON.stringify(result));
@@ -73,9 +87,39 @@ try {
   };
 
   await call('Page.enable');
-  await call('Page.addScriptToEvaluateOnNewDocument', {source:`Object.defineProperty(window,'localStorage',{get:()=>window.sessionStorage});`});
+  await call('Page.addScriptToEvaluateOnNewDocument', {source:`
+    Object.defineProperty(window,'localStorage',{get:()=>window.sessionStorage});
+    // Capture writes in this tab instead of replacing the user's clipboard.
+    Object.defineProperty(navigator,'clipboard',{value:{async writeText(text){
+      if(window.cumesCopyFailure)throw Error('Clipboard denied');
+      if(window.cumesCopyPending)await new Promise(resolve=>window.cumesResolveCopy=resolve);
+      window.cumesCopiedJSON=text;
+    }}});
+  `});
   await call('Emulation.setDeviceMetricsOverride', {width:1280,height:1000,deviceScaleFactor:1,mobile:false});
   await call('Page.navigate', {url}); await call('Page.bringToFront'); await ready();
+  assert.equal(await evaluate(`document.getElementById('equilibrium-settings').open`),false);
+  await preview();
+  const initialPreview=await evaluate(`document.getElementById('coil-equilibrium').value`);
+  await evaluate(`document.getElementById('coil-equilibrium').focus()`);
+  await call('Input.insertText',{text:'unexpected edit'});
+  assert.equal(await evaluate(`document.getElementById('coil-equilibrium').value`),initialPreview,'JSON preview must be read-only');
+  await evaluate(`window.cumesCopyFailure=true;document.getElementById('copy-input-json').click()`);
+  await wait(`document.getElementById('input-copy-status').textContent.startsWith('Clipboard unavailable.')`);
+  assert.equal(await evaluate(`(() => {const field=document.getElementById('coil-equilibrium');return document.activeElement===field && field.selectionStart===0 && field.selectionEnd===field.value.length})()`),true);
+  await evaluate(`window.cumesCopyFailure=false;window.cumesCopyPending=true;document.getElementById('copy-input-json').click();document.getElementById('rbc-1').value='1.11';document.getElementById('rbc-1').dispatchEvent(new Event('input',{bubbles:true}));document.getElementById('pressure').value='0.15';document.getElementById('pressure').dispatchEvent(new Event('input',{bubbles:true}))`);
+  assert.equal(await evaluate(`document.getElementById('copy-input-json').disabled`),true,'Edits must not start overlapping clipboard writes');
+  await evaluate(`window.cumesCopyPending=false;window.cumesResolveCopy()`);
+  await wait(`!document.getElementById('copy-input-json').disabled`);
+  assert.equal(await evaluate('window.cumesCopiedJSON'),initialPreview,'Copy uses the input shown when the button was pressed');
+  await preview();
+  await evaluate(`(() => {document.getElementById('editor-tab-stages').click();const field=document.querySelector('[data-stage-key="ns_array"]');field.value='35';field.dispatchEvent(new Event('input',{bubbles:true}))})()`);
+  assert.equal(await evaluate(`document.getElementById('coil-equilibrium').value`),'');
+  assert.equal(await evaluate(`document.getElementById('copy-input-json').disabled`),true);
+  await evaluate(`(() => {const field=document.querySelector('[data-stage-key="ns_array"]');field.value='7';field.dispatchEvent(new Event('input',{bubbles:true}))})()`);
+  await preview();
+  await evaluate(`document.getElementById('editor-tab-boundary').click()`);
+  console.log('PASS: basic fixed preview, live controls, both tabs, read-only JSON, clipboard success/failure and invalid-edit recovery');
   const original = await input();
   const savedEditor = await evaluate(`localStorage.getItem('cumes.editor.v1')`);
   for (const source of ['{', '[]', JSON.stringify({...solovev,ns_array:[19,7]})]) {
@@ -92,7 +136,8 @@ try {
   assert.equal(await evaluate('document.body.dataset.cumesPrecision'), 'float');
   assert.equal(await evaluate('contourAvailable()'), true);
   assert.equal(await evaluate(`document.querySelectorAll('#boundary-coefficients input[data-family="rbc"]').length`), solovev.mpol);
-  await evaluate(`document.getElementById('editor-tab-stages').click();const control=document.querySelector('[data-stage-key="ns_array"]');control.value='8';control.dispatchEvent(new Event('input'))`);
+  await evaluate(`document.getElementById('editor-tab-stages').click();const control=document.querySelector('[data-stage-key="ns_array"]');control.value='8';control.dispatchEvent(new Event('input',{bubbles:true}))`);
+  await preview();
   await call('Page.reload'); await ready(); assert.deepEqual((await input()).ns_array, [8,19]);
   await preset('w7x'); await preset('upload'); assert.deepEqual((await input()).ns_array, [8,19]);
   await evaluate(`document.getElementById('reset').click()`); await ready();
@@ -129,19 +174,35 @@ try {
   assert.equal(await evaluate('document.body.dataset.boundaryMode'), 'free');
   assert.deepEqual(await evaluate(`JSON.parse(document.getElementById('coil-currents').value)`), free.extcur);
   assert.deepEqual(await evaluate(`JSON.parse(document.getElementById('coil-grid').value)`), free.makegrid_parameters);
+  for (const [id,changed] of [
+    ['coil-currents',free.extcur.map((current,i)=>i ? current : current+100)],
+    ['coil-grid',{...free.makegrid_parameters,number_of_r_grid_points:203}]
+  ]) {
+    const source=await evaluate(`document.getElementById('${id}').value`);
+    await evaluate(`document.getElementById('${id}').value=${JSON.stringify(JSON.stringify(changed))};document.getElementById('${id}').dispatchEvent(new Event('input',{bubbles:true}))`);
+    await preview();
+    await evaluate(`document.getElementById('${id}').value='{';document.getElementById('${id}').dispatchEvent(new Event('input',{bubbles:true}))`);
+    assert.equal(await evaluate(`document.getElementById('coil-equilibrium').value`),'');
+    assert.equal(await evaluate(`document.getElementById('copy-input-json').disabled`),true);
+    await evaluate(`document.getElementById('${id}').value=${JSON.stringify(source)};document.getElementById('${id}').dispatchEvent(new Event('input',{bubbles:true}))`);
+    await preview();
+  }
   await call('Page.reload'); await ready(); assert.deepEqual(await input(), free);
   await solve('free');
   assert.equal(await evaluate('document.body.dataset.cumesExecution'), 'worker');
+  await evaluate(`document.getElementById('coil-preset').value='cth_like';document.getElementById('coil-preset').dispatchEvent(new Event('change',{bubbles:true}))`);
+  await wait(`document.getElementById('coil-status').textContent.startsWith('Coils ready') && JSON.parse(inputJSON()).coils_file==='/inputs/coils.cth_like'`);
+  await preview();
 
   const name = 'uploaded <input> with a long filename.json';
   await upload(name, solovev);
   assert.equal(await evaluate(`document.querySelector('#input-upload-status input')`), null);
   await call('Emulation.setDeviceMetricsOverride', {width:390,height:1000,deviceScaleFactor:1,mobile:false});
-  await evaluate(`document.getElementById('theme-toggle').click();window.scrollTo(0,0)`);
+  await evaluate(`document.getElementById('theme-toggle').click();document.getElementById('equilibrium-settings').scrollIntoView({block:'center'})`);
   assert.equal(await evaluate('document.documentElement.scrollWidth > document.documentElement.clientWidth'), false);
   const screenshot = await call('Page.captureScreenshot', {format:'png'});
   await writeFile(`${prefix}-mobile.png`, Buffer.from(screenshot.data,'base64'));
-  console.log('PASS: invalid/canceled uploads, full fixed/3-D/asymmetric/free input retention, precision selection, presets, reload/reset, busy controls and mobile layout');
+  console.log('PASS: JSON preview/copy, invalid/canceled uploads, full fixed/3-D/asymmetric/free input retention, precision selection, presets, reload/reset, busy controls and mobile layout');
 } finally {
   if (target) await cdp.call('Target.closeTarget', {targetId:target});
   cdp.close();

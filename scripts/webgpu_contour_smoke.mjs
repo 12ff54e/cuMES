@@ -142,21 +142,21 @@ try {
     assert.deepEqual({...retained.input,ftol_array:edited.input.ftol_array},edited.input);
   }
   await resize(16);
-  // A 3-D JSON edit must retain its toroidal harmonics and leave planar editing.
+  // Loading a 3-D input must retain its toroidal harmonics and leave planar editing.
   const threeD = structuredClone(edited.input);
   threeD.ntor = 1; threeD.rbs.push({m:1,n:1,value:.003});
-  await evaluate(`document.getElementById('coil-equilibrium').value=${JSON.stringify(JSON.stringify(threeD))};document.getElementById('apply-equilibrium').click()`);
+  await evaluate(`writeSurfaceInput(${JSON.stringify(threeD)});shape.contour=null;cumesBoundaryChanged()`);
   assert.equal(await evaluate(`document.getElementById('boundary-editor-mode').hidden`),true);
   assert.equal((await snapshot()).mode,'fourier');
   assert.deepEqual((await snapshot()).input,threeD);
   // Changing the selected poloidal resolution must update the contour basis.
   const refined = structuredClone(edited.input);
   refined.mpol = 10; refined.zbc.push({m:9,n:0,value:.004});
-  await evaluate(`document.getElementById('coil-equilibrium').value=${JSON.stringify(JSON.stringify(refined))};document.getElementById('apply-equilibrium').click();document.getElementById('mode-contour').click()`);
+  await evaluate(`writeSurfaceInput(${JSON.stringify(refined)});shape.contour=null;cumesBoundaryChanged();document.getElementById('mode-contour').click()`);
   assert.equal((await snapshot()).points.length,16);
   await drag(3,2,-2);
   assert.ok((await snapshot()).input.zbc.some(h=>h.m===9&&Math.abs(h.value)>1e-4));
-  await evaluate(`document.getElementById('coil-equilibrium').value=${JSON.stringify(JSON.stringify(edited.input))};document.getElementById('apply-equilibrium').click()`);
+  await evaluate(`writeSurfaceInput(${JSON.stringify(edited.input)});shape.contour=null;cumesBoundaryChanged()`);
   assert.equal((await snapshot()).points.length,16);
   console.log('Contour editing: PASS (point count, independent handles, vertical offset, profiles, reload, precision and JSON resolution)');
   await solve('asymmetric');

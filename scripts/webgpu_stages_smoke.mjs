@@ -204,15 +204,9 @@ try {
     await tab('boundary');
     const original = await evaluate('JSON.parse(inputJSON())');
     const imported = {...original, ns_array:[9,17],niter_array:[700,800],ftol_array:[1e-5,1e-6]};
-    const invalid = {...imported, ns_array:[17,9]};
-    await evaluate(`document.getElementById('equilibrium-settings').open=true;const source=document.getElementById('coil-equilibrium');source.focus();source.value=${JSON.stringify(JSON.stringify(invalid))};source.dispatchEvent(new Event('input',{bubbles:true}))`);
-    assert.equal(await selectedTab(), 'boundary', 'Live JSON validation must not switch away from the text being edited');
-    assert.equal(await evaluate('document.activeElement.id'), 'coil-equilibrium');
-    await evaluate(`document.getElementById('run').click()`);
-    assert.equal(await selectedTab(), 'stages');
-    assert.equal(await evaluate('document.body.dataset.cumesExecution'), 'idle');
-    await tab('boundary');
-    await evaluate(`document.getElementById('coil-equilibrium').value=${JSON.stringify(JSON.stringify(imported))};document.getElementById('apply-equilibrium').click()`);
+    await count(2);
+    for (const key of ['ns_array','niter_array','ftol_array'])
+      for (let i = 0; i < 2; i++) await set(key,i,imported[key][i]);
     assert.deepEqual(await evaluate(`stageEditor.read()`), {ns_array:[9,17],niter_array:[700,800],ftol_array:[1e-5,1e-6]});
     await set('ns_array',0,11);
     assert.deepEqual(await evaluate('JSON.parse(document.getElementById("coil-equilibrium").value)'), {...imported,ns_array:[11,17]});
