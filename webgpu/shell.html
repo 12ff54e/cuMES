@@ -74,8 +74,8 @@
     nav a { color:var(--muted); text-decoration:none; padding:10px 0; border-bottom:2px solid transparent; }
     nav a:hover { color:var(--cyan); }
     nav a[aria-current=page] { color:var(--cyan); border-bottom-color:var(--cyan); }
-    .theme-toggle { display:inline-flex; align-items:center; gap:8px; padding:8px 12px;
-      border:1px solid var(--line); border-radius:4px; background:transparent; color:var(--ink); font-size:14px; cursor:pointer; }
+    .theme-toggle { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:40px; height:40px; padding:0;
+      border:1px solid var(--line); border-radius:4px; background:transparent; color:var(--ink); font-size:20px; cursor:pointer; }
     .theme-toggle:hover { background:var(--panel); }
     .theme-toggle[aria-pressed=true] { color:var(--cyan); }
     .workspace { display:grid; grid-template-columns:minmax(0,.82fr) minmax(0,1.3fr); gap:24px; align-items:start; }
@@ -246,7 +246,7 @@
       .site-header{flex-direction:column;align-items:flex-start;gap:20px} .header-actions{width:100%;justify-content:space-between}
       .plot-wrap{min-height:390px} svg{min-height:358px} .results svg,.equilibrium-3d{height:358px} }
     @media(max-width:520px) { .page{width:calc(100% - 28px);padding-top:20px} .site-header{gap:16px;padding-bottom:18px}
-      .header-actions{flex-wrap:wrap;gap:14px} nav{gap:20px} .theme-toggle{padding:6px 10px}
+      .header-actions{flex-wrap:wrap;gap:14px} nav{gap:20px}
       .boundary-choice{gap:10px} .panel-head,.controls,.setup-row{padding:16px} .panel-head h2{font-size:22px}
       .coefficient-columns{grid-template-columns:1fr} .pressure-control{max-width:none} .status-strip{grid-template-columns:1fr}
       .metric{padding:12px 16px;border-right:0;border-bottom:1px solid var(--line)}
@@ -262,7 +262,7 @@
       <div class="brand"><span class="mark" aria-hidden="true"></span><div><h1>cuMES</h1><div class="subtitle">Magnetic equilibrium · WebGPU</div></div></div>
       <div class="header-actions">
         <nav aria-label="Main navigation"><a href="?" data-view="editor">Boundary editor</a><a href="?mode=test" data-view="verification">GPU verification</a></nav>
-        <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false"><span aria-hidden="true">◐</span> Dark theme</button>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Dark theme" title="Toggle dark theme" aria-pressed="false"><span aria-hidden="true">◐</span></button>
       </div>
     </header>
   <div class="page" id="app">
