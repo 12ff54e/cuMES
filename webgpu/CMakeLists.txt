@@ -183,7 +183,7 @@ add_test(
           -DARTIFACT_BASE=$<TARGET_FILE_DIR:cumes_webgpu>/cumes_webgpu
           -P ${CMAKE_CURRENT_SOURCE_DIR}/check_artifacts.cmake)
 set_tests_properties(webgpu_artifacts PROPERTIES LABELS "unit;webgpu")
-foreach(test IN ITEMS shader_templates threads pages boundary_geometry
+foreach(test IN ITEMS shader_templates threads pages boundary_geometry stages
                       residual_plot iteration_timing timestamps precision_switch log_buffer
                       free_boundary worker runtime_loader verification_log cdp)
   add_test(NAME webgpu_${test}

@@ -216,6 +216,22 @@
     .surface-toolbar label { color:var(--muted); }
     #surface-editor > label { display:flex; align-items:center; gap:8px; margin:12px 0; }
     #allow-asymmetry { margin:0; }
+    .stage-settings { min-width:0; margin:26px 0 0; padding:16px 0 0; border:0; border-top:1px solid var(--line); }
+    .stage-settings legend { padding:0 10px 0 0; font-size:21px; }
+    .stage-count-label { display:flex; align-items:center; gap:12px; }
+    .stage-count-label input { width:6em; }
+    .stage-settings p { margin:10px 0; }
+    .stage-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:14px; }
+    .stage-table th { color:var(--muted); font-weight:400; text-align:left; padding:8px 4px; }
+    .stage-table th:first-child { width:54px; }
+    .stage-table td { padding:5px 4px; }
+    .stage-table input { width:100%; font:13px var(--mono); }
+    .stage-settings details { margin-top:14px; padding:0 10px 12px; }
+    .stage-settings summary { padding-left:4px; padding-right:4px; }
+    .stage-sync-label { display:flex; align-items:flex-start; gap:8px; }
+    .stage-sync-label input { margin:4px 0 0; }
+    #stage-error { color:var(--danger); font-size:14px; }
+    #stage-error:empty { display:none; }
     #boundary-error { color:var(--danger); font-size:14px; }
     #equilibrium-settings { padding:0 12px 12px; }
     #equilibrium-settings p { color:var(--muted); font:16px/1.5 var(--serif); }
@@ -289,8 +305,7 @@
             <p class="subtitle">Edit one toroidal mode at a time. Both views update together. Enable non-stellarator symmetry to edit R sine and Z cosine coefficients.</p>
             <div class="formula">R = Σ [RBC cos(α) + RBS sin(α)]<br>Z = Σ [ZBS sin(α) + ZBC cos(α)], α = mθ − n·NFP·φ</div>
           </section>
-          <details id="equilibrium-settings" hidden><summary>Resolution, profiles and input JSON</summary>
-            <div class="setup-row fixed-configuration"><label for="grid-sequence">Radial grids</label><select id="grid-sequence"><option value="1">Single grid · 99 surfaces</option><option value="3">Multigrid · 33 → 66 → 99</option><option value="custom" hidden>Custom input</option></select></div>
+          <details id="equilibrium-settings" hidden><summary>Profiles, angular resolution and input JSON</summary>
             <p>VMEC input: boundary coefficients, profiles, field periods, resolution and iteration budget. Apply JSON updates the preview; Run uses the edited input.</p>
             <textarea id="coil-equilibrium" rows="14" aria-label="Equilibrium input JSON" spellcheck="false"></textarea>
             <button id="apply-equilibrium" class="secondary" type="button">Apply JSON</button>
@@ -312,6 +327,19 @@
             <button class="secondary" id="reset-contour">Reset points from Fourier fit</button>
           </div>
           <label class="pressure-control axisymmetric-input">Pressure scale <output id="pressure-value"></output><input id="pressure" type="range" min="0.02" max="0.22" step="0.005"></label>
+          <fieldset id="stage-settings" class="stage-settings">
+            <legend>Radial grid stages</legend>
+            <label class="stage-count-label" for="stage-count">Stage count <input id="stage-count" type="number" min="1" max="510" step="1" value="1" aria-describedby="stage-count-help stage-error"></label>
+            <p class="subtitle" id="stage-count-help">Changing the count spaces grids evenly up to the current final grid. Grid sizes must increase from one stage to the next.</p>
+            <table class="stage-table"><thead><tr><th scope="col">Stage</th><th scope="col">Radial grid points</th></tr></thead><tbody id="stage-grids"></tbody></table>
+            <details id="stage-limits"><summary>Step caps and tolerances</summary>
+              <label class="stage-sync-label"><input id="stage-sync-limits" type="checkbox"> Use the same step cap and tolerance for all stages</label>
+              <p class="subtitle">Enabling sync copies stage 1 to the other stages. Edits in any stage then update all stages.</p>
+              <table class="stage-table"><thead><tr><th scope="col">Stage</th><th scope="col">Step cap</th><th scope="col">Tolerance</th></tr></thead><tbody id="stage-limit-rows"></tbody></table>
+              <p class="subtitle" id="stage-tolerance-floor"></p>
+            </details>
+            <p id="stage-error" role="status"></p>
+          </fieldset>
           <section class="precision-control" id="editor-precision-control" aria-label="Solver precision" hidden>
             <span>Precision</span>
             <div class="mode-switch" role="group" aria-label="Select precision">
@@ -415,12 +443,15 @@
           const next=new URL(location.href);
           next.searchParams.set('precision',precision);
           next.searchParams.delete('coils');
-          beforeSwitch();
+          if(beforeSwitch(precision)===false)return;
           location.assign(next.href);
         });
       }
     }
-    installPrecisionSwitch(document,location,()=>{if(appMode){saveSurfaceInput();localStorage.setItem('cumes.input.v1',inputJSON())}});
+    installPrecisionSwitch(document,location,precision=>{if(appMode){try{
+      if(stageEditor)writeStageSettings(stageEditor.read(precision));
+      saveSurfaceInput();localStorage.setItem('cumes.input.v1',inputJSON());
+    }catch(error){stageEditor?.showError(error.message);return false}}});
     const MAX_M=5,CONTOUR_POINTS=16,TRANSFORM_SAMPLES=512;
     const defaults={r:[3.999,1.026,-.068,0,0,0],z:[0,1.580,.010,0,0,0],pressure:.125};
     const editorStorageKey=asymmetricPreset?fixedStorageKey+'.editor':'cumes.editor.v1';
@@ -430,11 +461,13 @@
       saved.contour.every(point=>Array.isArray(point)&&point.length===2&&point.every(Number.isFinite))?
       saved.contour.map(point=>point.map(Number)):null;
     const shape={r:defaults.r.map((v,m)=>finite(saved?.r?.[m],v)),z:defaults.z.map((v,m)=>finite(saved?.z?.[m],v)),
+      stages:saved?.stages||{ns_array:[5,11,55],niter_array:[1200,2500,3000],ftol_array:Array(3).fill(document.body.dataset.cumesPrecision==='double'?1e-12:1e-5)},
       pressure:finite(saved?.pressure,defaults.pressure),contour:savedContour,mode:saved?.mode==='contour'?'contour':'fourier',
       contourPoints:Number.isInteger(saved?.contourPoints)&&saved.contourPoints>=4&&saved.contourPoints%2===0?
         saved.contourPoints:savedContour?.length||CONTOUR_POINTS};
-    let editorMode=shape.mode,surfaceEditor=null;
+    let editorMode=shape.mode,surfaceEditor=null,stageEditor=null;
     const advancedEditor=appMode&&(boundaryMode.free||w7xPreset||asymmetricPreset);
+    const stageSyncStorageKey=(boundaryMode.free?'cumes.free.v1':advancedEditor?fixedStorageKey:editorStorageKey)+'.stage-sync';
     document.body.dataset.surfaceEditor=String(advancedEditor);
     const value=id=>document.getElementById(id);
     const harmonicSpecs=[...Array.from({length:6},(_,m)=>({family:'r',m,id:`rbc-${m}`})),
@@ -536,15 +569,18 @@
       const points=Array.from({length:count},(_,i)=>contourAt(2*Math.PI*i/count));
       shape.contourPoints=count;shape.contour=points;activeHandle=null;syncEditorMode();drawBoundary()});
     function inputJSON(){if(advancedEditor){const input=boundaryMode.free?boundaryMode.input():readSurfaceInput();
-      input.lfreeb=boundaryMode.free;input.ftol_array=input.ns_array.map(()=>document.body.dataset.cumesPrecision==='double'?1e-12:1e-5);return JSON.stringify(input)}const harmonics=(values,start)=>values.slice(start).map((v,i)=>({n:0,m:i+start,value:Number(v.toFixed(8))}));
-      return JSON.stringify({mpol:6,ntor:0,delt:.9,ncurr:0,nstep:250,ns_array:[5,11,55],niter_array:[1200,2500,3000],
-        ftol_array:Array(3).fill(query.get('precision')==='double'?1e-12:1e-5),am:[shape.pressure,-shape.pressure],ai:[1],raxis_c:[shape.r[0]],zaxis_s:[0],
+      input.lfreeb=boundaryMode.free;return JSON.stringify(input)}const harmonics=(values,start)=>values.slice(start).map((v,i)=>({n:0,m:i+start,value:Number(v.toFixed(8))}));
+      return JSON.stringify({mpol:6,ntor:0,delt:.9,ncurr:0,nstep:250,...shape.stages,
+        am:[shape.pressure,-shape.pressure],ai:[1],raxis_c:[shape.r[0]],zaxis_s:[0],
         rbc:harmonics(shape.r,0),zbs:harmonics(shape.z,1)},null,2)}
     value('run')?.addEventListener('click',async()=>{if(value('run').disabled)return;try{await editorReady;
+      stageEditor.read();
       if(advancedEditor){for(const control of document.querySelectorAll('#boundary-coefficients input:not(:disabled)')){if(control.value===''||!control.validity.valid)throw Error('Enter finite boundary coefficients before running.')}saveSurfaceInput()}
-      localStorage.setItem('cumes.input.v1',inputJSON());value('run').disabled=true;
+      const source=inputJSON();cumesValidateStages(JSON.parse(source),document.body.dataset.cumesPrecision);
+      localStorage.setItem('cumes.input.v1',source);value('run').disabled=true;
       const next=new URL(location.href);next.searchParams.set('run','1');next.searchParams.delete('coils');location.assign(next.href)}catch(error){value('boundary-error').textContent=error.message}});
     value('reset')?.addEventListener('click',()=>{if(boundaryMode.free)localStorage.removeItem('cumes.free.v1');else if(w7xPreset||asymmetricPreset)localStorage.removeItem(fixedStorageKey);else localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
+      localStorage.removeItem(stageSyncStorageKey);
       if(asymmetricPreset)localStorage.removeItem(editorStorageKey);
       const next=new URL(location.href);next.searchParams.delete('run');
       if(boundaryMode.free)next.searchParams.set('coils',value('coil-preset').value==='upload'?'solovev':value('coil-preset').value);
@@ -608,7 +644,8 @@
       if(advancedEditor)showBoundaryPreview()}
     window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
     function setEditorDisabled(disabled){document.querySelectorAll('.coefficient-slider,#pressure,#contour-points,.mode-switch button:not([id^="editor-precision-"]):not([id^="boundary-"]),#reset-contour').forEach(control=>control.disabled=disabled);
-      document.querySelectorAll('#free-boundary-controls textarea,#free-boundary-controls select,#coil-upload-button,#coil-upload,#coil-equilibrium,#apply-equilibrium,#grid-sequence,#allow-asymmetry,#boundary-coefficients input').forEach(control=>control.disabled=disabled);
+      document.querySelectorAll('#free-boundary-controls textarea,#free-boundary-controls select,#coil-upload-button,#coil-upload,#coil-equilibrium,#apply-equilibrium,#allow-asymmetry,#boundary-coefficients input').forEach(control=>control.disabled=disabled);
+      value('stage-settings').disabled=disabled;
       for(const family of ['zbs','rbs']){const dc=document.querySelector(`#boundary-coefficients input[data-family="${family}"][data-m="0"][data-n="0"]`);if(dc)dc.disabled=true;}
       value('reset').disabled=disabled}
     function updateStatus(){const state=document.body.dataset.cumesWebgpu;
@@ -629,6 +666,19 @@
     function writeSurfaceInput(input){value('coil-equilibrium').value=JSON.stringify(input,null,2);saveSurfaceInput()}
     function saveSurfaceInput(){if(!advancedEditor)return;if(boundaryMode.free)boundaryMode.save();
       else localStorage.setItem(fixedStorageKey,JSON.stringify(readSurfaceInput()))}
+    function writeStageSettings(stages){
+      if(advancedEditor){const input=readSurfaceInput();Object.assign(input,stages);writeSurfaceInput(input)}
+      else{shape.stages=cumesStageArrays(stages);saveContourState()}
+    }
+    function prepareStageEditor(){
+      stageEditor=installCumesStageEditor(value('stage-settings'),document.body.dataset.cumesPrecision,stageSyncStorageKey,
+        stages=>{writeStageSettings(stages);invalidateResult()},stages=>{
+          const tolerances=stages.ftol_array,same=tolerances.every(v=>v===tolerances[0]);
+          value('editor-precision-tolerance').textContent=`${same?'Tolerance':'Final tolerance'}: ${tolerances.at(-1).toExponential()}`;
+          window.cumesResidualPlot?.setTolerance(tolerances[0]);
+        });
+      stageEditor.refresh(advancedEditor?readSurfaceInput():shape.stages);
+    }
     let w7xGridInput;
     function selectW7xGrids(input,grids){
       if(grids==='3'){input.ns_array=[...w7xGridInput.ns_array];input.niter_array=[...w7xGridInput.niter_array]}
@@ -639,12 +689,6 @@
     value('fixed-preset-description').textContent=(w7xPreset||asymmetricPreset)?'Prescribed plasma boundary':'Drag a contour or tune its harmonics';
     value('fixed-preset').addEventListener('change',()=>{saveSurfaceInput();const next=new URL(location.href);
       next.searchParams.set('preset',value('fixed-preset').value);next.searchParams.delete('run');next.searchParams.delete('grids');location.assign(next.href)});
-    value('grid-sequence').addEventListener('change',()=>{const grids=value('grid-sequence').value;if(grids==='custom')return;
-      const input=readSurfaceInput();selectW7xGrids(input,grids);writeSurfaceInput(input);
-      invalidateResult()});
-    function syncGridSequence(){if(boundaryMode.free||!w7xGridInput)return;const grids=readSurfaceInput().ns_array.join(',');
-      value('grid-sequence').options[0].textContent=`Single grid · ${w7xGridInput.ns_array.at(-1)} surfaces`;value('grid-sequence').options[1].textContent=`Multigrid · ${w7xGridInput.ns_array.join(' → ')}`;
-      value('grid-sequence').value=grids===String(w7xGridInput.ns_array.at(-1))?'1':grids===w7xGridInput.ns_array.join(',')?'3':'custom'}
     function drawSurfaceBoundary(){if(!surfaceEditor?.fourier)return;
       syncEditorMode();
       if(editorMode==='contour')drawTokamakBoundary();
@@ -671,9 +715,12 @@
       value('boundary-editor-mode').hidden=advancedEditor;
       value('equilibrium-settings').hidden=!advancedEditor;
       value('boundary-title').textContent=boundaryMode.free?'Initial plasma boundary':'Input boundary';
-      if(!advancedEditor)return;
+      if(!advancedEditor){prepareStageEditor();return}
       value('run').disabled=true;
-      if(boundaryMode.free)await boundaryMode.ready;
+      if(boundaryMode.free){await boundaryMode.ready;
+        // The named preset initializes once; reloads retain subsequent edits.
+        if(query.has('coils')){const next=new URL(location.href);next.searchParams.delete('coils');history.replaceState(null,'',next.href)}
+      }
       else{
         const response=await fetch(new URL(asymmetricPreset?'presets/fixed-asymmetric.json':'presets/fixed-w7x.json',location.href));
         if(!response.ok)throw Error('Could not load the boundary preset.');
@@ -681,20 +728,25 @@
         try{input=JSON.parse(localStorage.getItem(fixedStorageKey))}catch(_){}
         if(!input){input=structuredClone(w7xGridInput);selectW7xGrids(input,query.get('grids')||(asymmetricPreset?'3':'1'))}
         else if(query.has('grids'))selectW7xGrids(input,query.get('grids'));
-        writeSurfaceInput(input);syncGridSequence();
+        writeSurfaceInput(input);
         // Grid query parameters initialize setup once; subsequent JSON edits remain authoritative.
         if(query.has('grids')){const next=new URL(location.href);next.searchParams.delete('grids');history.replaceState(null,'',next.href)}
       }
+      prepareStageEditor();
       surfaceEditor=installCumesSurfaceEditor(readSurfaceInput,writeSurfaceInput,changed=>{
         if(changed){shape.contour=null;invalidateResult()}drawSurfaceBoundary();
       });
-      window.cumesBoundaryChanged=()=>{if(surfaceEditor.refresh()){invalidateResult();drawSurfaceBoundary();setEditorDisabled(running&&document.body.classList.contains('busy'))}};
-      value('apply-equilibrium').addEventListener('click',()=>{shape.contour=null;if(surfaceEditor.refresh()){saveSurfaceInput();syncGridSequence();invalidateResult();drawSurfaceBoundary()}});
+      window.cumesBoundaryChanged=()=>{stageEditor.refresh(readSurfaceInput());if(surfaceEditor.refresh()){invalidateResult();drawSurfaceBoundary();setEditorDisabled(running&&document.body.classList.contains('busy'))}};
+      value('apply-equilibrium').addEventListener('click',()=>{try{
+        if(!stageEditor.refresh(readSurfaceInput()))return;
+        shape.contour=null;if(surfaceEditor.refresh()){saveSurfaceInput();invalidateResult();drawSurfaceBoundary()}
+      }catch(error){value('boundary-error').textContent=error.message}});
       if(!surfaceEditor.refresh())throw Error(value('boundary-error').textContent);
       setEditorDisabled(running);value('run').disabled=running;
     }
     for(const id of ['coil-equilibrium','coil-currents','coil-grid'])value(id).addEventListener('input',invalidateResult);
-    value('coil-equilibrium').addEventListener('input',()=>{shape.contour=null;saveContourState()});
+    value('coil-equilibrium').addEventListener('input',()=>{shape.contour=null;saveContourState();
+      try{stageEditor?.refresh(readSurfaceInput())}catch(_){}});
     const editorReady=prepareEditor();
     function versionedAsset(path,prefix){
       const runtime=document.getElementById('cumes-runtime').content.querySelector('script');

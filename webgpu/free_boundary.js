@@ -95,6 +95,7 @@ function installCumesBoundaryMode() {
       if (!response.ok) throw Error(`Could not load ${name} setup (${response.status}).`);
       const input = await response.json();
       if (token !== selection) return;
+      if (query.get('precision') === 'float') input.ftol_array = input.ns_array.map(() => 1e-5);
       config = {preset: name, input};
       show(config); save();
       coilLoad = loadCoils(config, token);

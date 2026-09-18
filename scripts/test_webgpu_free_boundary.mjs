@@ -45,6 +45,10 @@ assert.throws(()=>f.app.input(),/finite coil currents/);
 const fixed=fixture('?boundary=fixed');await fixed.app.ready;
 assert.equal(fixed.requests.length,0,'fixed-boundary startup must not fetch coil assets');
 console.log('PASS: lazy presets, explicit selection, editable currents, validation, and mode-switch persistence');
+const scalar=fixture('?boundary=free&coils=solovev&precision=float');await scalar.app.ready;
+assert.deepEqual([...scalar.app.input().ftol_array],[1e-5,1e-5]);
+const custom=fixture('?boundary=free&precision=float',{preset:'solovev',input:{...presets.solovev,ftol_array:[2e-4,3e-5]}});
+await custom.app.ready;assert.deepEqual([...custom.app.input().ftol_array],[2e-4,3e-5],'Reloads must retain explicit tolerances');
 
 await f.get('coil-preset').onchange({target:{value:'w7x'}});
 assert.equal(f.app.geometry().name,'coils.w7x');

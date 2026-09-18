@@ -34,7 +34,7 @@ try{
     // A one-time grid URL must not overwrite subsequent JSON edits on reload.
     const custom={...JSON.parse(input),ns_array:[55],niter_array:[123],ftol_array:[1e-5]};
     await evaluate(`document.getElementById('coil-equilibrium').value=${JSON.stringify(JSON.stringify(custom))};document.getElementById('apply-equilibrium').click()`);
-    assert.equal(await evaluate(`document.getElementById('grid-sequence').value`),'custom');
+    assert.deepEqual(await evaluate('stageEditor.read()'),{ns_array:[55],niter_array:[123],ftol_array:[1e-5]});
     // A signed-n coefficient edit updates the exact solver input and both previews.
     await evaluate(`document.getElementById('toroidal-mode').value='-1';document.getElementById('toroidal-mode').dispatchEvent(new Event('change'))`);
     const edit=`document.querySelector('#boundary-coefficients input[data-family="rbc"][data-m="1"]')`;
@@ -52,7 +52,8 @@ try{
     assert.deepEqual(JSON.parse(await evaluate('inputJSON()')).rbc,JSON.parse(changed).rbc);
     assert.deepEqual(JSON.parse(await evaluate('inputJSON()')).ns_array,[55]);
     assert.deepEqual(JSON.parse(await evaluate('inputJSON()')).niter_array,[123]);
-    assert.equal(await evaluate(`document.getElementById('grid-sequence').value`),'custom');
+    assert.equal(await evaluate(`document.getElementById('stage-count').value`),'1');
+    assert.equal(await evaluate(`document.querySelector('[data-stage-key="ns_array"]').value`),'55');
     await evaluate(`document.getElementById('editor-precision-${precision==='double'?'double':'single'}').click()`);
     await wait(idle+`&&document.body.dataset.cumesPrecision==='${precision}'`);
     // Restore the preset coefficient before testing startup.

@@ -17,7 +17,22 @@ boundary**. There is one Run/Stop workflow, precision control, residual plot,
 and result download. Historical `?solve=w7x` links open the fixed W7-X editor;
 `?preset=w7x` is the current link. Neither starts a solve until Run is clicked.
 The fixed W7-X preset keeps its single-grid default and combined iteration
-budget; **Resolution, profiles and input JSON** also offers multigrid.
+budget. **Radial grid stages** exposes the stage count and the number of radial
+grid points in each stage for every fixed/free-boundary preset. Changing the
+count evenly spaces the grids up to the current final grid; the final stage's
+step cap and tolerance are retained, and added stages inherit its limits.
+Grid sizes must be strictly increasing integers from 3 to 512.
+
+**Step caps and tolerances** is collapsed initially. Its sync checkbox copies
+stage 1's cap and tolerance to all stages; while checked, editing either value
+in any stage updates that value everywhere. Unchecking it permits independent
+limits. The controls and input JSON edit the same `ns_array`, `niter_array`, and
+`ftol_array`, and Run uses those values without replacing the tolerances.
+Default tolerances follow precision switches (`1e-5` single, `1e-12` paired);
+custom tolerances are retained, with an error if they violate the selected
+precision's input floor (`1e-6` single, `1e-16` paired). These floors are input
+constraints, not convergence guarantees. Stage settings and the sync choice
+survive reloads, and the stage controls are locked during a solve.
 
 Run, Stop and edit, Reset, and Download share a toolbar above the workspace
 that remains visible while scrolling. During a solve it shows recent completed
@@ -74,9 +89,9 @@ inputs. The separate W7-X startup implementation has been removed.
 surfaces with WebGPU. A compute shader reconstructs the full torus from the
 six/twelve physical Fourier families and reduces its bounding radius. Geometry,
 bounds, and line indices stay on the GPU; changing the camera uploads one
-32-byte uniform. Coefficient edits regenerate geometry, while moving the
-section slider updates only the highlighted line. Every supplied surface is
-drawn, without the previous CPU renderer's surface subsampling.
+96-byte camera/palette uniform. Coefficient edits regenerate geometry, while
+moving the section slider updates only the highlighted line. Every supplied
+surface is drawn, without the previous CPU renderer's surface subsampling.
 
 Vertex and fragment shaders draw instanced line ribbons with consistent screen
 widths, transparent colors, and 4x multisampling. The view retains transparent
@@ -478,6 +493,14 @@ It also checks asymmetric vertical offsets, retained profiles, reloads,
 precision changes, poloidal resolution changes and the Fourier-only 3-D path.
 Its temporary tab uses session storage and is closed after the checks.
 
+`node scripts/webgpu_stages_smoke.mjs APP_URL OUTPUT_PREFIX` checks stage count,
+independent and synced limits, precision changes, reloads, and JSON round trips
+for fixed/free presets. It runs custom scalar, paired and free-boundary schedules,
+verifies the solver's per-stage tolerances and final radial resolution, and
+checks that a one-step cap stops the solve. Its temporary tab also uses session
+storage and closes after the checks; screenshots include desktop and mobile
+stage controls.
+
 After convergence the result panel defaults to an interactive 3-D equilibrium
 view, with a **2D cut** toggle for the poloidal cross-section. The solver sends
 the selected nested surfaces as all six physical Fourier parity families plus
@@ -678,8 +701,9 @@ limit. Omitting the preference argument tests an unmodified Firefox profile.
 
 The W7-X page has a **Single / Double** precision switch above the log;
 the boundary editor has the same switch alongside its run controls.
-Single selects scalar f32 (`1e-5`); Double selects the existing paired-f32
-mode (`1e-12`), not native IEEE fp64. Switching restarts an existing editor solve
+Single selects scalar f32 (default tolerance `1e-5`); Double selects the existing
+paired-f32 mode (default `1e-12`), not native IEEE fp64. Switching restarts an
+existing editor solve
 (an idle editor stays idle); W7-X returns to setup and waits for **Start**.
 Both preserve the other URL options, including radial grids and FFT selection.
 The current precision is also published as `data-cumes-precision` on the

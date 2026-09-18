@@ -144,6 +144,11 @@ function createCumesResidualPlot(panel, tolerance) {
   doc.fonts?.ready.then(schedule);
   schedule();
   return {
+    setTolerance(value) {
+      if (rows.length || !positive(value)) return;
+      tolerance = value; minLog = Math.floor(Math.log10(value)) - 1; maxLog = Math.max(0, minLog + 1);
+      schedule();
+    },
     append(sample) {
       if (!validPosition(sample) || sample.fsq?.length !== 3 || !sample.fsq.every(value => typeof value === 'number')) return;
       const last = rows.at(-1);

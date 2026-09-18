@@ -96,6 +96,13 @@ assert.deepEqual(markerCalls.filter(c=>c[0]==='moveTo').map(c=>c.slice(1)),[1,2,
 assert.deepEqual(markerCalls.filter(c=>c[0]==='lineTo').map(c=>c.slice(1)),[1,2,4,5,6].map(x=>[62+x/10*560,212]));
 const restartReport=restartPlot.report();restartReport.restarts[0].x=999;
 assert.equal(restartPlot.report().restarts[0].x,1);
+const configuredPlot=sandbox.createCumesResidualPlot(panel,1e-12);
+configuredPlot.setTolerance(2e-4);calls.length=0;tick();
+assert.ok(calls.some(c=>c[0]==='fillText'&&c[1]==='target 2e-4'));
+assert.equal(configuredPlot.report().minLog,-5);
+configuredPlot.append({...sample(1),tolerance:2e-4});
+configuredPlot.setTolerance(1e-12);
+assert.equal(configuredPlot.report().samples[0].tolerance,2e-4,'Changing setup must retain the completed history');
 // Exercise the actual Emscripten scalar import and its payload (not log parsing).
 const library={};let emitted;
 vm.runInNewContext(readFileSync(new URL('../webgpu/browser_bridge.js',import.meta.url),'utf8'),{

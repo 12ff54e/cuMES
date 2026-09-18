@@ -2509,9 +2509,6 @@ class BrowserSelfTest : public std::enable_shared_from_this<BrowserSelfTest> {
                        "Interactive input mapping failed: " + errors.front());
                 return;
             }
-            for (auto& stage : parsed.spec.stages) {
-                stage.tolerance = paired ? 1.0e-12 : 1.0e-5;
-            }
             auto validated = cumes::validate(std::move(parsed.spec), options);
             if (!validated.has_value()) {
                 const auto errors = validated.error().errors();

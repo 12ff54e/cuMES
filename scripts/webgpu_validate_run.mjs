@@ -3,7 +3,7 @@
 // APP_URL chooses the solve/conformance mode. Never runs concurrent GPU solves.
 // CUMES_INPUT_JSON loads a fixed (?preset=w7x) or bundled-coil free input
 // (?boundary=free without coils=) into tab-local editor storage. The page
-// retains its displayed browser precision tolerance.
+// uses its configured stage tolerances, subject to the selected precision floor.
 // CUMES_CAPTURE_OUTPUT=1 saves the scientific binary and its payload digest.
 import {appendFile, readFile, rename, writeFile} from 'node:fs/promises';
 import {isDeepStrictEqual} from 'node:util';
