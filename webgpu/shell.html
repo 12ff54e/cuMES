@@ -94,7 +94,9 @@
     .plot-wrap { position:relative; min-height:460px; padding:16px; }
     svg,.equilibrium-3d { display:block; width:100%; border-radius:2px; background:var(--bg); touch-action:none; }
     svg { height:100%; min-height:428px; }
-    .equilibrium-3d { height:428px; cursor:grab; }
+    /* Keep the empty/2D result viewport the same size as the 3D canvas. */
+    .results svg,.equilibrium-3d { height:428px; }
+    .equilibrium-3d { cursor:grab; }
     .equilibrium-3d:active { cursor:grabbing; }
     .equilibrium-3d[hidden] + .orbit-hint { display:none; }
     .orbit-view { position:relative; }
@@ -242,7 +244,7 @@
     @media(max-width:1100px) { .header-actions{gap:18px} .page{width:calc(100% - 48px)} .boundary-choice>.subtitle{margin-left:0;flex-basis:100%} }
     @media(max-width:920px) { .page{width:min(100% - 40px,700px)} .workspace{grid-template-columns:1fr}
       .site-header{flex-direction:column;align-items:flex-start;gap:20px} .header-actions{width:100%;justify-content:space-between}
-      .plot-wrap{min-height:390px} svg{min-height:358px} .equilibrium-3d{height:358px} }
+      .plot-wrap{min-height:390px} svg{min-height:358px} .results svg,.equilibrium-3d{height:358px} }
     @media(max-width:520px) { .page{width:calc(100% - 28px);padding-top:20px} .site-header{gap:16px;padding-bottom:18px}
       .header-actions{flex-wrap:wrap;gap:14px} nav{gap:20px} .theme-toggle{padding:6px 10px}
       .boundary-choice{gap:10px} .panel-head,.controls,.setup-row{padding:16px} .panel-head h2{font-size:22px}
