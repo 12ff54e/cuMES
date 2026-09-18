@@ -233,6 +233,9 @@
     #stage-error { color:var(--danger); font-size:14px; }
     #stage-error:empty { display:none; }
     #boundary-error { color:var(--danger); font-size:14px; }
+    #input-upload-status { margin:0; padding:0 22px 14px; overflow-wrap:anywhere; }
+    #input-upload-status:empty { display:none; }
+    #input-upload-status.error { color:var(--danger); }
     #equilibrium-settings { padding:0 12px 12px; }
     #equilibrium-settings p { color:var(--muted); font:16px/1.5 var(--serif); }
     [hidden] { display:none!important; }
@@ -268,7 +271,7 @@
       </div><span class="subtitle">Switching modes stops the current run and keeps your setup.</span>
     </section>
     <section class="solver-toolbar" aria-label="Solver actions">
-      <div class="actions"><button class="primary" id="run">Run equilibrium</button><button class="secondary" id="stop-run" hidden>Stop and edit</button><button class="secondary" id="reset">Reset</button><a class="secondary" id="download" hidden>Download .bin</a></div>
+      <div class="actions"><button class="primary" id="run">Run equilibrium</button><button class="secondary" id="stop-run" hidden>Stop and edit</button><button class="secondary" id="reset">Reset</button><button class="secondary" id="input-upload-button" type="button">Upload input JSON</button><input id="input-upload" type="file" accept=".json,application/json" aria-label="Upload equilibrium input JSON" hidden><a class="secondary" id="download" hidden>Download .bin</a></div>
       <span class="solver-speed" id="iteration-speed" title="Recent completed solver iterations per second" hidden><output id="iteration-rate" aria-label="Solver iterations per second">—</output> iter/s</span>
     </section>
     <main class="workspace">
@@ -276,7 +279,7 @@
         <div class="panel-head"><h2 id="boundary-title">Input boundary</h2><div id="boundary-editor-mode" class="mode-switch" role="tablist" aria-label="Boundary editor mode">
           <button id="mode-fourier" class="active" role="tab" aria-selected="true">Fourier</button><button id="mode-contour" role="tab" aria-selected="false">Contour</button></div></div>
         <div class="setup-row fixed-configuration">
-          <label for="fixed-preset">Boundary preset</label><select id="fixed-preset"><option value="solovev">Solovev · axisymmetric</option><option value="w7x">W7-X · 3-D</option><option value="asymmetric">Asymmetric tokamak</option></select>
+          <label for="fixed-preset">Boundary preset</label><select id="fixed-preset"><option value="solovev">Solovev · axisymmetric</option><option value="w7x">W7-X · 3-D</option><option value="asymmetric">Asymmetric tokamak</option><option value="upload" id="uploaded-preset" hidden>Uploaded JSON</option></select>
           <span class="subtitle" id="fixed-preset-description"></span>
         </div>
         <section id="free-boundary-controls" class="controls" hidden>
@@ -292,6 +295,7 @@
           </details>
           <p id="coil-status" class="subtitle" role="status"></p>
         </section>
+        <p id="input-upload-status" class="subtitle" role="status"></p>
         <div class="plot-wrap"><svg id="boundary-plot" viewBox="0 0 600 520" aria-label="Editable plasma boundary"></svg>
           <div class="hint" id="editor-hint">Tune the Fourier harmonics below</div></div>
         <div class="slice-control" id="slice-control" hidden><label for="slice-angle">Toroidal cross-section φ <output id="slice-angle-value"></output></label>
@@ -405,8 +409,9 @@
   <script>
     migrateCumesEditorUrl(location,history);
     installCumesBrowser();
-    const query=new URLSearchParams(location.search),w7xPreset=query.get('preset')==='w7x',asymmetricPreset=query.get('preset')==='asymmetric';
-    const fixedStorageKey=asymmetricPreset?'cumes.fixed.asymmetric.v1':'cumes.fixed.w7x.v1';
+    const query=new URLSearchParams(location.search),w7xPreset=query.get('preset')==='w7x',asymmetricPreset=query.get('preset')==='asymmetric',uploadedPreset=query.get('preset')==='upload';
+    const uploadStorageKey='cumes.fixed.upload.v1';
+    const fixedStorageKey=uploadedPreset?uploadStorageKey:asymmetricPreset?'cumes.fixed.asymmetric.v1':'cumes.fixed.w7x.v1';
     const appMode=query.get('mode')!=='test',running=appMode&&query.get('run')==='1';
     const boundaryMode=installCumesBoundaryMode();
     document.getElementById('free-precision-note').hidden=!boundaryMode.free;
@@ -454,7 +459,7 @@
     }catch(error){stageEditor?.showError(error.message);return false}}});
     const MAX_M=5,CONTOUR_POINTS=16,TRANSFORM_SAMPLES=512;
     const defaults={r:[3.999,1.026,-.068,0,0,0],z:[0,1.580,.010,0,0,0],pressure:.125};
-    const editorStorageKey=asymmetricPreset?fixedStorageKey+'.editor':'cumes.editor.v1';
+    const editorStorageKey=(asymmetricPreset||uploadedPreset)?fixedStorageKey+'.editor':'cumes.editor.v1';
     const saved=(()=>{try{return JSON.parse(localStorage.getItem(editorStorageKey))}catch(_){return null}})();
     const finite=(candidate,fallback)=>Number.isFinite(Number(candidate))?Number(candidate):fallback;
     const savedContour=Array.isArray(saved?.contour)&&saved.contour.length>=4&&saved.contour.length%2===0&&
@@ -465,8 +470,8 @@
       pressure:finite(saved?.pressure,defaults.pressure),contour:savedContour,mode:saved?.mode==='contour'?'contour':'fourier',
       contourPoints:Number.isInteger(saved?.contourPoints)&&saved.contourPoints>=4&&saved.contourPoints%2===0?
         saved.contourPoints:savedContour?.length||CONTOUR_POINTS};
-    let editorMode=shape.mode,surfaceEditor=null,stageEditor=null;
-    const advancedEditor=appMode&&(boundaryMode.free||w7xPreset||asymmetricPreset);
+    let editorMode=shape.mode,surfaceEditor=null,stageEditor=null,inputLoading=false;
+    const advancedEditor=appMode&&(boundaryMode.free||w7xPreset||asymmetricPreset||uploadedPreset);
     const stageSyncStorageKey=(boundaryMode.free?'cumes.free.v1':advancedEditor?fixedStorageKey:editorStorageKey)+'.stage-sync';
     document.body.dataset.surfaceEditor=String(advancedEditor);
     const value=id=>document.getElementById(id);
@@ -485,12 +490,12 @@
       value(`${spec.id}-value`).textContent=shape[spec.family][spec.m].toFixed(3)}
       value('pressure').value=Math.min(Number(value('pressure').max),Math.max(Number(value('pressure').min),shape.pressure));
       value('pressure-value').textContent=Number(value('pressure').value).toFixed(3)}
-    function contourAvailable(){return !advancedEditor||(asymmetricPreset&&!boundaryMode.free&&surfaceEditor?.fourier?.ntor===0)}
+    function contourAvailable(){return !advancedEditor||((asymmetricPreset||uploadedPreset)&&!boundaryMode.free&&surfaceEditor?.fourier?.ntor===0)}
     function contourMpol(){return advancedEditor?surfaceEditor.fourier.mpol:MAX_M+1}
     function contourAsymmetric(){return advancedEditor&&surfaceEditor.fourier.lasym}
     function contourPointRange(){return[12,36]}
     function contourPointCount(){const[min,max]=contourPointRange();return Math.min(max,Math.max(min,shape.contourPoints))}
-    function saveContourState(){if(!advancedEditor||asymmetricPreset)localStorage.setItem(editorStorageKey,
+    function saveContourState(){if(!advancedEditor||asymmetricPreset||uploadedPreset)localStorage.setItem(editorStorageKey,
       JSON.stringify(advancedEditor?{mode:shape.mode,contour:shape.contour,contourPoints:shape.contourPoints}:shape))}
     function pointAt(theta){if(advancedEditor){const f=surfaceEditor.fourier;return fourierPoint(f,f.surfaces[0].coefficients,theta,0)}
       let r=0,z=0;for(let m=0;m<shape.r.length;++m)r+=shape.r[m]*Math.cos(m*theta);
@@ -573,18 +578,54 @@
       return JSON.stringify({mpol:6,ntor:0,delt:.9,ncurr:0,nstep:250,...shape.stages,
         am:[shape.pressure,-shape.pressure],ai:[1],raxis_c:[shape.r[0]],zaxis_s:[0],
         rbc:harmonics(shape.r,0),zbs:harmonics(shape.z,1)},null,2)}
-    value('run')?.addEventListener('click',async()=>{if(value('run').disabled)return;try{await editorReady;
+    value('run')?.addEventListener('click',async()=>{if(value('run').disabled||inputLoading)return;try{await editorReady;
       stageEditor.read();
       if(advancedEditor){for(const control of document.querySelectorAll('#boundary-coefficients input:not(:disabled)')){if(control.value===''||!control.validity.valid)throw Error('Enter finite boundary coefficients before running.')}saveSurfaceInput()}
       const source=inputJSON();cumesValidateStages(JSON.parse(source),document.body.dataset.cumesPrecision);
       localStorage.setItem('cumes.input.v1',source);value('run').disabled=true;
       const next=new URL(location.href);next.searchParams.set('run','1');next.searchParams.delete('coils');location.assign(next.href)}catch(error){value('boundary-error').textContent=error.message}});
-    value('reset')?.addEventListener('click',()=>{if(boundaryMode.free)localStorage.removeItem('cumes.free.v1');else if(w7xPreset||asymmetricPreset)localStorage.removeItem(fixedStorageKey);else localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
+    value('reset')?.addEventListener('click',()=>{if(boundaryMode.free)localStorage.removeItem('cumes.free.v1');else if(advancedEditor)localStorage.removeItem(fixedStorageKey);else localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
       localStorage.removeItem(stageSyncStorageKey);
-      if(asymmetricPreset)localStorage.removeItem(editorStorageKey);
+      if(asymmetricPreset||uploadedPreset)localStorage.removeItem(editorStorageKey);
       const next=new URL(location.href);next.searchParams.delete('run');
       if(boundaryMode.free)next.searchParams.set('coils',value('coil-preset').value==='upload'?'solovev':value('coil-preset').value);
+      else if(uploadedPreset)selectUploadedPrecision(next,localStorage.getItem(uploadStorageKey+'.original'));
       location.assign(next.href)});
+    value('input-upload-button').addEventListener('click',()=>value('input-upload').click());
+    value('input-upload').addEventListener('change',async event=>{
+      const file=event.target.files[0];
+      if(!file||inputLoading||document.body.classList.contains('busy'))return;
+      const status=value('input-upload-status'),runDisabled=value('run').disabled;
+      inputLoading=true;value('input-upload-button').disabled=true;value('input-upload').disabled=true;value('run').disabled=true;
+      status.classList.remove('error');status.textContent='Reading '+file.name+'…';
+      let navigating=false;
+      try{
+        const {input,precision}=readCumesInputJSON(await file.text(),document.body.dataset.cumesPrecision);
+        const next=new URL(location.href);
+        for(const key of ['run','mode','solve','grids','coils'])next.searchParams.delete(key);
+        next.searchParams.set('precision',precision);
+        next.searchParams.set('boundary',input.lfreeb?'free':'fixed');
+        if(input.lfreeb){
+          let saved;try{saved=JSON.parse(localStorage.getItem('cumes.free.v1'))}catch(_){}
+          const config=cumesFreeInputConfig(input,saved);
+          if(config.preset==='upload'&&!await cumesCoilStore())throw Error('Upload the referenced coil file again before loading this input JSON.');
+          localStorage.setItem('cumes.free.v1',JSON.stringify({...config,inputName:file.name}));
+          next.searchParams.delete('preset');
+        }else{
+          const source=JSON.stringify(input);
+          localStorage.setItem(uploadStorageKey+'.original',source);
+          localStorage.setItem(uploadStorageKey,source);
+          localStorage.setItem(uploadStorageKey+'.name',file.name);
+          localStorage.removeItem(uploadStorageKey+'.editor');
+          next.searchParams.set('preset','upload');
+        }
+        navigating=true;location.assign(next.href);
+      }catch(error){status.classList.add('error');status.textContent='Could not load '+file.name+': '+error.message}
+      finally{event.target.value='';inputLoading=false;if(!navigating){
+        const busy=document.body.classList.contains('busy');value('input-upload-button').disabled=busy;value('input-upload').disabled=busy;
+        value('run').disabled=busy||runDisabled;
+      }}
+    });
     const verificationMode=!appMode;
     if(verificationMode){output.textContent='Requesting WebGPU…\n';output.classList.add('verification-summary');
       value('verification-progress').hidden=false;value('verification-details').hidden=false}
@@ -644,6 +685,7 @@
       if(advancedEditor)showBoundaryPreview()}
     window.cumesPublishEquilibrium=drawResult;window.cumesAppReady=()=>{if(appMode&&!running)value('status').textContent='Editor ready'};
     function setEditorDisabled(disabled){document.querySelectorAll('.coefficient-slider,#pressure,#contour-points,.mode-switch button:not([id^="editor-precision-"]):not([id^="boundary-"]),#reset-contour').forEach(control=>control.disabled=disabled);
+      value('input-upload-button').disabled=disabled||inputLoading;value('input-upload').disabled=disabled||inputLoading;
       document.querySelectorAll('#free-boundary-controls textarea,#free-boundary-controls select,#coil-upload-button,#coil-upload,#coil-equilibrium,#apply-equilibrium,#allow-asymmetry,#boundary-coefficients input').forEach(control=>control.disabled=disabled);
       value('stage-settings').disabled=disabled;
       for(const family of ['zbs','rbs']){const dc=document.querySelector(`#boundary-coefficients input[data-family="${family}"][data-m="0"][data-n="0"]`);if(dc)dc.disabled=true;}
@@ -685,10 +727,16 @@
       else{input.ns_array=[w7xGridInput.ns_array.at(-1)];input.niter_array=[w7xGridInput.niter_array.reduce((sum,n)=>sum+n,0)]}
       input.ftol_array=input.ns_array.map(()=>document.body.dataset.cumesPrecision==='double'?1e-12:1e-5);
     }
-    value('fixed-preset').value=asymmetricPreset?'asymmetric':w7xPreset?'w7x':'solovev';
-    value('fixed-preset-description').textContent=(w7xPreset||asymmetricPreset)?'Prescribed plasma boundary':'Drag a contour or tune its harmonics';
+    function selectUploadedPrecision(url,source){try{
+      url.searchParams.set('precision',readCumesInputJSON(source,document.body.dataset.cumesPrecision).precision);
+    }catch(_){/* Keep invalid saved JSON accessible for correction in the editor. */}}
+    value('uploaded-preset').hidden=!localStorage.getItem(uploadStorageKey+'.original');
+    value('fixed-preset').value=uploadedPreset?'upload':asymmetricPreset?'asymmetric':w7xPreset?'w7x':'solovev';
+    value('fixed-preset-description').textContent=(w7xPreset||asymmetricPreset||uploadedPreset)?'Prescribed plasma boundary':'Drag a contour or tune its harmonics';
     value('fixed-preset').addEventListener('change',()=>{saveSurfaceInput();const next=new URL(location.href);
-      next.searchParams.set('preset',value('fixed-preset').value);next.searchParams.delete('run');next.searchParams.delete('grids');location.assign(next.href)});
+      next.searchParams.set('preset',value('fixed-preset').value);next.searchParams.delete('run');next.searchParams.delete('grids');
+      if(value('fixed-preset').value==='upload')selectUploadedPrecision(next,localStorage.getItem(uploadStorageKey)||localStorage.getItem(uploadStorageKey+'.original'));
+      location.assign(next.href)});
     function drawSurfaceBoundary(){if(!surfaceEditor?.fourier)return;
       syncEditorMode();
       if(editorMode==='contour')drawTokamakBoundary();
@@ -721,7 +769,12 @@
         // The named preset initializes once; reloads retain subsequent edits.
         if(query.has('coils')){const next=new URL(location.href);next.searchParams.delete('coils');history.replaceState(null,'',next.href)}
       }
-      else{
+      else if(uploadedPreset){
+        const source=localStorage.getItem(fixedStorageKey)||localStorage.getItem(fixedStorageKey+'.original');
+        if(!source)throw Error('Upload an input JSON file to open this setup.');
+        writeSurfaceInput(JSON.parse(source));
+        value('input-upload-status').textContent='Loaded '+(localStorage.getItem(fixedStorageKey+'.name')||'input JSON');
+      }else{
         const response=await fetch(new URL(asymmetricPreset?'presets/fixed-asymmetric.json':'presets/fixed-w7x.json',location.href));
         if(!response.ok)throw Error('Could not load the boundary preset.');
         w7xGridInput=await response.json();let input;

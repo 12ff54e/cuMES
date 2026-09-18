@@ -34,9 +34,25 @@ precision's input floor (`1e-6` single, `1e-16` paired). These floors are input
 constraints, not convergence guarantees. Stage settings and the sync choice
 survive reloads, and the stage controls are locked during a solve.
 
-Run, Stop and edit, Reset, and Download share a toolbar above the workspace
-that remains visible while scrolling. During a solve it shows recent completed
-iterations per second, updated about twice per second from the existing pass
+**Upload input JSON** reads a local cuMES input file and opens it for editing
+without starting a solve. Fixed-boundary files use a separate **Uploaded JSON**
+setup, preserving the complete coefficients, profiles, angular resolution and
+stage arrays; built-in presets keep their own saved settings. Uploaded settings
+survive reloads, and Reset in this setup restores the original uploaded input.
+The file's `lfreeb` selects the boundary mode. Tolerances below `1e-6` select
+paired precision without relaxing the requested values. Malformed JSON or
+invalid boundary/stage structure leaves the current setup in place; the shared
+solver config API validates profiles, unknown keys and physics on Run.
+
+Free-boundary JSON must include `extcur` and inline `makegrid_parameters`.
+References to bundled `coils.solovev`, `coils.w7x`, or `coils.cth_like` are mapped
+to browser assets. For a custom coil reference, upload the matching coil file
+in Free boundary first, then upload the input JSON. External field-grid files
+are unsupported in this upload path; the browser generates its grid from coils.
+
+Run, Stop and edit, Reset, Upload input JSON, and Download share a toolbar above
+the workspace that remains visible while scrolling. During a solve it shows
+recent completed iterations per second, updated about twice per second from the existing pass
 timing events. The rate includes GPU waits and vacuum work, counts completed
 passes through restarts, and resets at each grid so startup, MAKEGRID, and grid
 setup do not enter the estimate. It remains available with `timing=0` and adds
@@ -500,6 +516,12 @@ verifies the solver's per-stage tolerances and final radial resolution, and
 checks that a one-step cap stops the solve. Its temporary tab also uses session
 storage and closes after the checks; screenshots include desktop and mobile
 stage controls.
+
+`node scripts/webgpu_input_upload_smoke.mjs APP_URL OUTPUT_PREFIX` exercises the
+file input with fixed, 3-D, asymmetric and free-boundary JSON files, including
+malformed/canceled uploads, saved setup isolation, reload/reset, and precision
+selection. It also runs imported fixed/free equilibria and checks mobile layout
+in a temporary tab with session storage, which it closes after the checks.
 
 After convergence the result panel defaults to an interactive 3-D equilibrium
 view, with a **2D cut** toggle for the poloidal cross-section. The solver sends

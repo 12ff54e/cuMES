@@ -15,6 +15,21 @@ function cumesCoilStore(value) {
   });
 }
 
+function cumesFreeInputConfig(input, saved) {
+  if (!Array.isArray(input.extcur) || !input.extcur.length || !input.extcur.every(Number.isFinite))
+    throw Error('Free-boundary input needs an extcur array of finite coil currents.');
+  if (!input.makegrid_parameters || typeof input.makegrid_parameters !== 'object' ||
+      Array.isArray(input.makegrid_parameters) || input.makegrid_parameters_file || input.mgrid_file)
+    throw Error('Free-boundary uploads need inline makegrid_parameters; the browser generates the field grid from coils.');
+  const basename = path => typeof path === 'string' ? path.replaceAll('\\', '/').split('/').at(-1) : '';
+  const name = basename(input.coils_file);
+  const preset = name.match(/^coils\.(solovev|w7x|cth_like)$/)?.[1];
+  if (preset) return {preset, input:{...input, coils_file:'/inputs/coils.' + preset}};
+  if (name && saved?.preset === 'upload' && [saved.coilName, basename(saved.input?.coils_file)].includes(name))
+    return {preset:'upload', coilName:saved.coilName, input:{...input, coils_file:saved.input.coils_file}};
+  throw Error('Upload the referenced coil file in Free boundary, then upload this input JSON again.');
+}
+
 function installCumesBoundaryMode() {
   const query = new URLSearchParams(location.search);
   const free = query.get('boundary') === 'free';
@@ -59,6 +74,7 @@ function installCumesBoundaryMode() {
     if (token === selection) publishCoils(file, geometry);
   }
   function show(data) {
+    get('input-upload-status').textContent = data.inputName ? 'Loaded ' + data.inputName : '';
     get('coil-preset').value = data.preset;
     get('coil-description').textContent = data.coilName || `coils.${data.preset}`;
     const {extcur, makegrid_parameters, coils_file, lfreeb, ...equilibrium} = data.input;

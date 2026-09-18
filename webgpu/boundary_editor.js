@@ -10,6 +10,23 @@ function migrateCumesEditorUrl(location, history) {
   history.replaceState(null, '', url.href);
 }
 
+function readCumesInputJSON(source, precision) {
+  let input;
+  try { input = JSON.parse(source.replace(/^\uFEFF/, '')); }
+  catch (_) { throw Error('The file is not valid JSON. Choose a cuMES input JSON file.'); }
+  if (!input || typeof input !== 'object' || Array.isArray(input))
+    throw Error('The input JSON must contain an equilibrium object.');
+  for (const key of ['lfreeb', 'lasym'])
+    if (input[key] !== undefined && typeof input[key] !== 'boolean')
+      throw Error(`${key} must be true or false.`);
+  // Reuse the editor checks before replacing a saved setup. The shared solver
+  // config API validates profiles, unknown keys and physics when Run is selected.
+  boundaryFourier(input);
+  const stages = cumesValidateStages(input, 'double');
+  if (stages.ftol_array.some(tolerance => tolerance < 1e-6)) precision = 'double';
+  return {input, precision};
+}
+
 function setBoundaryCoefficient(input, family, m, n, value) {
   const coefficients = input[family] ||= [];
   const existing = coefficients.find(coefficient => coefficient.m === m && coefficient.n === n);
