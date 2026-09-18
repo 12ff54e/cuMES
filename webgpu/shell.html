@@ -765,7 +765,8 @@
           value('editor-precision-tolerance').textContent=`${same?'Tolerance':'Final tolerance'}: ${tolerances.at(-1).toExponential()}`;
           window.cumesResidualPlot?.setTolerance(tolerances[0]);
         },()=>selectEditorTab('stages',value('editor-panel-stages').hidden));
-      stageEditor.refresh(advancedEditor?readSurfaceInput():shape.stages);
+      // Loading a saved preset must preserve the selected tab, even if its stages need correction.
+      stageEditor.refresh(advancedEditor?readSurfaceInput():shape.stages,false);
     }
     let w7xGridInput;
     function selectW7xGrids(input,grids){

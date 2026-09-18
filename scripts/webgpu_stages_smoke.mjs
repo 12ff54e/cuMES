@@ -65,6 +65,13 @@ try {
     await evaluate(`document.getElementById('editor-precision-${precision === 'float' ? 'single' : 'double'}').click()`);
     await wait(`document.body?.dataset.cumesPrecision === '${precision}' && document.body.dataset.cumesWebgpu === 'ready'`);
   };
+  const selectPreset = async preset => {
+    await tab('boundary');
+    await evaluate(`window.cumesPresetNavigating=true;document.getElementById('fixed-preset').value='${preset}';document.getElementById('fixed-preset').dispatchEvent(new Event('change',{bubbles:true}))`);
+    await wait(`!window.cumesPresetNavigating && document.body?.dataset.cumesWebgpu === 'ready' && !document.getElementById('run').disabled`);
+    assert.equal(await selectedTab(), 'boundary', 'Selecting a boundary preset must retain the boundary tab');
+    assert.equal(await evaluate(`document.getElementById('fixed-preset').value`), preset);
+  };
   const photograph = async name => {
     await tab('stages');
     await evaluate(`document.getElementById('stage-settings').scrollIntoView({block:'center'})`);
@@ -170,6 +177,27 @@ try {
   await set('ftol_array',0,1e-5); await set('ftol_array',1,1e-5);
   await count(1); await set('niter_array',0,1);
   await solve('one-step-cap', {ns_array:[19],niter_array:[1],ftol_array:[1e-5]}, false);
+
+  await selectPreset('asymmetric');
+  assert.equal(await evaluate(`document.getElementById('stage-error').textContent`), '');
+  await changePrecision('double');
+  const asymmetricStages = await schedule();
+  await selectPreset('solovev');
+  await changePrecision('float');
+  await selectPreset('asymmetric');
+  assert.deepEqual(await schedule(), asymmetricStages, 'Preset selection must preserve saved tolerances');
+  assert.match(await evaluate(`document.getElementById('stage-error').textContent`), /at least 0.000001 for single precision/);
+  await reload();
+  assert.equal(await selectedTab(), 'boundary', 'Loading saved stages must not change tabs');
+  await evaluate(`document.getElementById('run').click()`);
+  assert.equal(await selectedTab(), 'stages', 'Run must still reveal incompatible saved tolerances');
+  assert.equal(await evaluate('document.body.dataset.cumesExecution'), 'idle');
+  await changePrecision('double');
+  assert.equal(await evaluate(`document.getElementById('stage-error').textContent`), '');
+  assert.deepEqual(await schedule(), asymmetricStages);
+  await selectPreset('solovev');
+  await selectPreset('asymmetric');
+  console.log('PASS: fresh and saved asymmetric presets retain the boundary tab; incompatible stages are revealed on Run');
 
   for (const preset of ['w7x','asymmetric']) {
     await navigate(`?preset=${preset}&precision=double`);
