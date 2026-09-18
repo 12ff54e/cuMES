@@ -68,6 +68,7 @@
     h1 { font-size:30px; margin:0; letter-spacing:-.025em; line-height:1.1; }
     .subtitle { color:var(--muted); font-size:14px; }
     .brand .subtitle { margin-top:4px; font:16px/1.4 var(--serif); }
+    .brand a { color:inherit; text-decoration:none; }
     .site-header { border-bottom:1px solid var(--line); padding-bottom:24px; }
     .header-actions { display:flex; align-items:center; gap:24px; }
     nav { display:flex; flex-wrap:wrap; gap:18px; font-size:16px; }
@@ -269,7 +270,7 @@
 </head>
 <body>
     <header class="page site-header">
-      <div class="brand"><span class="mark" aria-hidden="true"></span><div><h1>cuMES</h1><div class="subtitle">Magnetic equilibrium · WebGPU</div></div></div>
+      <div class="brand"><span class="mark" aria-hidden="true"></span><div><h1><a href="https://github.com/12ff54e/cuMES">cuMES</a></h1><div class="subtitle">Magnetic equilibrium · <a href="https://webgpu.org/">WebGPU</a></div></div></div>
       <div class="header-actions">
         <nav aria-label="Main navigation"><a href="?" data-view="editor">Boundary editor</a><a href="?mode=test" data-view="verification">GPU verification</a></nav>
         <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Dark theme" title="Toggle dark theme" aria-pressed="false"><span aria-hidden="true">◐</span></button>
