@@ -190,16 +190,16 @@ function cumesStagePrecision(stages, previous, next) {
   return cumesValidateStages(result, next);
 }
 
-function installCumesStageEditor(root, precision, storageKey, onChange, onRefresh) {
+function installCumesStageEditor(root, precision, storageKey, onChange, onRefresh, onError = () => {}) {
   const get = id => root.querySelector('#' + id);
   const count = get('stage-count'), sync = get('stage-sync-limits'), limits = get('stage-limits');
   const error = get('stage-error'), keys = ['ns_array', 'niter_array', 'ftol_array'];
   let savedSync = localStorage.getItem(storageKey) === 'true';
   sync.checked = savedSync;
   get('stage-tolerance-floor').textContent = `Minimum tolerance for this precision: ${precision === 'float' ? '1e-6' : '1e-16'}.`;
-  function showError(message) {
+  function showError(message, reveal = true) {
     error.textContent = message;
-    if (message) limits.open = true;
+    if (message) { limits.open = true; if (reveal) onError(); }
   }
   function fields(key) { return [...root.querySelectorAll(`[data-stage-key="${key}"]`)]; }
   function raw() {
@@ -244,7 +244,7 @@ function installCumesStageEditor(root, precision, storageKey, onChange, onRefres
       }
     }
   }
-  function refresh(input) {
+  function refresh(input, revealErrors = true) {
     try {
       const stages = cumesStageArrays(input);
       render(stages);
@@ -252,7 +252,7 @@ function installCumesStageEditor(root, precision, storageKey, onChange, onRefres
         sync.checked = false; rememberSync();
       }
       cumesValidateStages(stages, precision); onRefresh(stages); showError(''); return true;
-    } catch (failure) { showError(failure.message); return false; }
+    } catch (failure) { showError(failure.message, revealErrors); return false; }
   }
   count.addEventListener('change', () => {
     if (root.disabled) return;

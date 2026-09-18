@@ -45,6 +45,7 @@ try {
       await wait(`document.getElementById('input-upload-status')?.textContent === ${JSON.stringify('Loaded ' + name)}`);
       await ready();
       assert.equal(await evaluate('document.body.dataset.cumesExecution'), 'idle');
+      assert.equal(await evaluate(`document.getElementById('editor-panel-boundary').hidden`), false, 'Uploads open the boundary tab');
       assert.equal(await evaluate(`new URL(location.href).searchParams.has('run')`), false);
     } else {
       await wait(`document.getElementById('input-upload-status')?.classList.contains('error') && !inputLoading`);
@@ -53,6 +54,7 @@ try {
     }
   };
   const preset = async name => {
+    await evaluate(`document.getElementById('editor-tab-boundary').click()`);
     await evaluate(`document.getElementById('fixed-preset').value=${JSON.stringify(name)};document.getElementById('fixed-preset').dispatchEvent(new Event('change',{bubbles:true}))`);
     await wait(`new URL(location.href).searchParams.get('preset')===${JSON.stringify(name)}`); await ready();
   };
@@ -90,7 +92,7 @@ try {
   assert.equal(await evaluate('document.body.dataset.cumesPrecision'), 'float');
   assert.equal(await evaluate('contourAvailable()'), true);
   assert.equal(await evaluate(`document.querySelectorAll('#boundary-coefficients input[data-family="rbc"]').length`), solovev.mpol);
-  await evaluate(`const control=document.querySelector('[data-stage-key="ns_array"]');control.value='8';control.dispatchEvent(new Event('input'))`);
+  await evaluate(`document.getElementById('editor-tab-stages').click();const control=document.querySelector('[data-stage-key="ns_array"]');control.value='8';control.dispatchEvent(new Event('input'))`);
   await call('Page.reload'); await ready(); assert.deepEqual((await input()).ns_array, [8,19]);
   await preset('w7x'); await preset('upload'); assert.deepEqual((await input()).ns_array, [8,19]);
   await evaluate(`document.getElementById('reset').click()`); await ready();
@@ -108,7 +110,7 @@ try {
   await preset('upload');
   assert.equal(await evaluate('document.body.dataset.cumesPrecision'), 'double');
   assert.deepEqual((await input()).ftol_array, w7x.ftol_array);
-  await evaluate(`for(const control of document.querySelectorAll('[data-stage-key="ftol_array"]')){control.value='1e-5';control.dispatchEvent(new Event('input'))}`);
+  await evaluate(`document.getElementById('editor-tab-stages').click();for(const control of document.querySelectorAll('[data-stage-key="ftol_array"]')){control.value='1e-5';control.dispatchEvent(new Event('input'))}`);
   await evaluate(`document.getElementById('editor-precision-single').click()`);
   await wait(`document.body?.dataset.cumesPrecision==='float' && document.body.dataset.cumesWebgpu==='ready'`);
   await evaluate(`document.getElementById('reset').click()`);

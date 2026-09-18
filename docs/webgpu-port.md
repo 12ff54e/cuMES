@@ -23,6 +23,14 @@ count evenly spaces the grids up to the current final grid; the final stage's
 step cap and tolerance are retained, and added stages inherit its limits.
 Grid sizes must be strictly increasing integers from 3 to 512.
 
+The editor panel has two tabs: **Input boundary** (**Initial plasma boundary**
+in free-boundary mode) and **Radial grid stages**. Only the selected tab takes
+space in the panel. Precision controls and the Run toolbar remain available in
+both views. Switching tabs retains edits; the selection survives Run/Stop and
+reloads within the browser tab. Arrow keys, Home and End navigate the tab bar.
+Run reveals invalid settings in the stage tab; live JSON editing keeps its
+focus. Uploading a new JSON file opens its boundary tab.
+
 **Step caps and tolerances** is collapsed initially. Its sync checkbox copies
 stage 1's cap and tolerance to all stages; while checked, editing either value
 in any stage updates that value everywhere. Unchecking it permits independent
@@ -509,8 +517,9 @@ It also checks asymmetric vertical offsets, retained profiles, reloads,
 precision changes, poloidal resolution changes and the Fourier-only 3-D path.
 Its temporary tab uses session storage and is closed after the checks.
 
-`node scripts/webgpu_stages_smoke.mjs APP_URL OUTPUT_PREFIX` checks stage count,
-independent and synced limits, precision changes, reloads, and JSON round trips
+`node scripts/webgpu_stages_smoke.mjs APP_URL OUTPUT_PREFIX` checks setup tabs,
+keyboard navigation, hidden-stage validation, stage count, independent and
+synced limits, precision changes, reloads, and JSON round trips
 for fixed/free presets. It runs custom scalar, paired and free-boundary schedules,
 verifies the solver's per-stage tolerances and final radial resolution, and
 checks that a one-step cap stops the solve. Its temporary tab also uses session

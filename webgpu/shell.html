@@ -218,8 +218,16 @@
     .surface-toolbar label { color:var(--muted); }
     #surface-editor > label { display:flex; align-items:center; gap:8px; margin:12px 0; }
     #allow-asymmetry { margin:0; }
-    .stage-settings { min-width:0; margin:26px 0 0; padding:16px 0 0; border:0; border-top:1px solid var(--line); }
-    .stage-settings legend { padding:0 10px 0 0; font-size:21px; }
+    .editor-tabs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); border-bottom:1px solid var(--line); }
+    .editor-tabs button { border:0; border-bottom:2px solid transparent; padding:16px 12px; background:transparent;
+      color:var(--muted); font-size:18px; cursor:pointer; }
+    .editor-tabs button:hover { color:var(--cyan); background:var(--accent-soft); }
+    .editor-tabs button[aria-selected=true] { color:var(--cyan); border-bottom-color:var(--cyan); background:var(--accent-soft); }
+    .editor-tabs button:focus-visible { outline-offset:-4px; }
+    .boundary-mode-switch { width:fit-content; margin:16px 22px; }
+    .editor-tab-panel.controls { border-top:0; }
+    .editor-common-controls .precision-control { margin:0; }
+    .stage-settings { min-width:0; margin:0; padding:0; border:0; }
     .stage-count-label { display:flex; align-items:center; gap:12px; }
     .stage-count-label input { width:6em; }
     .stage-settings p { margin:10px 0; }
@@ -234,8 +242,9 @@
     .stage-sync-label input { margin:4px 0 0; }
     #stage-error { color:var(--danger); font-size:14px; }
     #stage-error:empty { display:none; }
-    #boundary-error { color:var(--danger); font-size:14px; }
-    #input-upload-status { margin:0; padding:0 22px 14px; overflow-wrap:anywhere; }
+    #boundary-error { color:var(--danger); font-size:14px; margin:0 0 14px; }
+    #boundary-error:empty { display:none; }
+    #input-upload-status { margin:0; padding:14px 22px; overflow-wrap:anywhere; }
     #input-upload-status:empty { display:none; }
     #input-upload-status.error { color:var(--danger); }
     #equilibrium-settings { padding:0 12px 12px; }
@@ -248,6 +257,7 @@
     @media(max-width:520px) { .page{width:calc(100% - 28px);padding-top:20px} .site-header{gap:16px;padding-bottom:18px}
       .header-actions{flex-wrap:wrap;gap:14px} nav{gap:20px}
       .boundary-choice{gap:10px} .panel-head,.controls,.setup-row{padding:16px} .panel-head h2{font-size:22px}
+      .boundary-mode-switch{margin:16px}
       .coefficient-columns{grid-template-columns:1fr} .pressure-control{max-width:none} .status-strip{grid-template-columns:1fr}
       .metric{padding:12px 16px;border-right:0;border-bottom:1px solid var(--line)}
       .result-head-actions{justify-content:flex-start} .residual-legend{gap:8px} .residual-caption{padding:10px 16px 16px}
@@ -278,8 +288,14 @@
     </section>
     <main class="workspace">
       <section class="panel editor">
-        <div class="panel-head"><h2 id="boundary-title">Input boundary</h2><div id="boundary-editor-mode" class="mode-switch" role="tablist" aria-label="Boundary editor mode">
-          <button id="mode-fourier" class="active" role="tab" aria-selected="true">Fourier</button><button id="mode-contour" role="tab" aria-selected="false">Contour</button></div></div>
+        <div class="editor-tabs" role="tablist" aria-label="Equilibrium setup">
+          <button id="editor-tab-boundary" type="button" role="tab" aria-selected="true" aria-controls="editor-panel-boundary"><span id="boundary-title">Input boundary</span></button>
+          <button id="editor-tab-stages" type="button" role="tab" aria-selected="false" aria-controls="editor-panel-stages" tabindex="-1">Radial grid stages</button>
+        </div>
+        <p id="input-upload-status" class="subtitle" role="status"></p>
+        <section id="editor-panel-boundary" class="editor-tab-panel" role="tabpanel" aria-labelledby="editor-tab-boundary">
+        <div id="boundary-editor-mode" class="mode-switch boundary-mode-switch" role="tablist" aria-label="Boundary editor mode">
+          <button id="mode-fourier" class="active" role="tab" aria-selected="true">Fourier</button><button id="mode-contour" role="tab" aria-selected="false">Contour</button></div>
         <div class="setup-row fixed-configuration">
           <label for="fixed-preset">Boundary preset</label><select id="fixed-preset"><option value="solovev">Solovev · axisymmetric</option><option value="w7x">W7-X · 3-D</option><option value="asymmetric">Asymmetric tokamak</option><option value="upload" id="uploaded-preset" hidden>Uploaded JSON</option></select>
           <span class="subtitle" id="fixed-preset-description"></span>
@@ -297,7 +313,6 @@
           </details>
           <p id="coil-status" class="subtitle" role="status"></p>
         </section>
-        <p id="input-upload-status" class="subtitle" role="status"></p>
         <div class="plot-wrap"><svg id="boundary-plot" viewBox="0 0 600 520" aria-label="Editable plasma boundary"></svg>
           <div class="hint" id="editor-hint">Tune the Fourier harmonics below</div></div>
         <div class="slice-control" id="slice-control" hidden><label for="slice-angle">Toroidal cross-section φ <output id="slice-angle-value"></output></label>
@@ -316,7 +331,6 @@
             <textarea id="coil-equilibrium" rows="14" aria-label="Equilibrium input JSON" spellcheck="false"></textarea>
             <button id="apply-equilibrium" class="secondary" type="button">Apply JSON</button>
           </details>
-          <p id="boundary-error" role="status"></p>
           <div id="fourier-editor" class="axisymmetric-input">
             <div class="coefficient-columns">
               <section class="harmonic-group"><h3>R cosine coefficients <span>R(θ) = Σ RBC(0,m) cos(mθ)</span></h3><div class="harmonic-controls" id="rbc-controls"></div></section>
@@ -333,8 +347,10 @@
             <button class="secondary" id="reset-contour">Reset points from Fourier fit</button>
           </div>
           <label class="pressure-control axisymmetric-input">Pressure scale <output id="pressure-value"></output><input id="pressure" type="range" min="0.02" max="0.22" step="0.005"></label>
-          <fieldset id="stage-settings" class="stage-settings">
-            <legend>Radial grid stages</legend>
+        </div>
+        </section>
+        <section id="editor-panel-stages" class="controls editor-tab-panel" role="tabpanel" aria-labelledby="editor-tab-stages" hidden>
+          <fieldset id="stage-settings" class="stage-settings" aria-label="Radial grid stages">
             <label class="stage-count-label" for="stage-count">Stage count <input id="stage-count" type="number" min="1" max="510" step="1" value="1" aria-describedby="stage-count-help stage-error"></label>
             <p class="subtitle" id="stage-count-help">Changing the count spaces grids evenly up to the current final grid. Grid sizes must increase from one stage to the next.</p>
             <table class="stage-table"><thead><tr><th scope="col">Stage</th><th scope="col">Radial grid points</th></tr></thead><tbody id="stage-grids"></tbody></table>
@@ -346,6 +362,9 @@
             </details>
             <p id="stage-error" role="status"></p>
           </fieldset>
+        </section>
+        <div class="controls editor-common-controls">
+          <p id="boundary-error" role="status"></p>
           <section class="precision-control" id="editor-precision-control" aria-label="Solver precision" hidden>
             <span>Precision</span>
             <div class="mode-switch" role="group" aria-label="Select precision">
@@ -477,6 +496,27 @@
     const stageSyncStorageKey=(boundaryMode.free?'cumes.free.v1':advancedEditor?fixedStorageKey:editorStorageKey)+'.stage-sync';
     document.body.dataset.surfaceEditor=String(advancedEditor);
     const value=id=>document.getElementById(id);
+    const editorTabKey='cumes.editor.tab',editorTabs=['boundary','stages'];
+    function selectEditorTab(selected,focus=false){
+      if(!editorTabs.includes(selected))selected='boundary';
+      for(const name of editorTabs){const active=name===selected,tab=value('editor-tab-'+name);
+        tab.setAttribute('aria-selected',String(active));tab.tabIndex=active?0:-1;
+        value('editor-panel-'+name).hidden=!active;
+      }
+      sessionStorage.setItem(editorTabKey,selected);
+      if(focus)value('editor-tab-'+selected).focus();
+    }
+    if(appMode){
+      for(const [index,name] of editorTabs.entries()){
+        const tab=value('editor-tab-'+name);
+        tab.addEventListener('click',()=>selectEditorTab(name));
+        tab.addEventListener('keydown',event=>{
+          const next={ArrowRight:(index+1)%editorTabs.length,ArrowLeft:(index+editorTabs.length-1)%editorTabs.length,Home:0,End:editorTabs.length-1}[event.key];
+          if(next===undefined)return;event.preventDefault();selectEditorTab(editorTabs[next],true);
+        });
+      }
+      selectEditorTab(sessionStorage.getItem(editorTabKey));
+    }
     const harmonicSpecs=[...Array.from({length:6},(_,m)=>({family:'r',m,id:`rbc-${m}`})),
       ...Array.from({length:5},(_,i)=>({family:'z',m:i+1,id:`zbs-${i+1}`}))];
     function coefficientBounds(family,m){if(family==='r'&&m===0)return[1,10];if(m===1)return[-3,3];return[-1,1]}
@@ -581,11 +621,15 @@
         am:[shape.pressure,-shape.pressure],ai:[1],raxis_c:[shape.r[0]],zaxis_s:[0],
         rbc:harmonics(shape.r,0),zbs:harmonics(shape.z,1)},null,2)}
     value('run')?.addEventListener('click',async()=>{if(value('run').disabled||inputLoading)return;try{await editorReady;
+      value('boundary-error').textContent='';
       stageEditor.read();
       if(advancedEditor){for(const control of document.querySelectorAll('#boundary-coefficients input:not(:disabled)')){if(control.value===''||!control.validity.valid)throw Error('Enter finite boundary coefficients before running.')}saveSurfaceInput()}
       const source=inputJSON();cumesValidateStages(JSON.parse(source),document.body.dataset.cumesPrecision);
       localStorage.setItem('cumes.input.v1',source);value('run').disabled=true;
-      const next=new URL(location.href);next.searchParams.set('run','1');next.searchParams.delete('coils');location.assign(next.href)}catch(error){value('boundary-error').textContent=error.message}});
+      const next=new URL(location.href);next.searchParams.set('run','1');next.searchParams.delete('coils');location.assign(next.href)}catch(error){
+        if(value('stage-error').textContent===error.message)selectEditorTab('stages',value('editor-panel-stages').hidden);
+        else value('boundary-error').textContent=error.message;
+      }});
     value('reset')?.addEventListener('click',()=>{if(boundaryMode.free)localStorage.removeItem('cumes.free.v1');else if(advancedEditor)localStorage.removeItem(fixedStorageKey);else localStorage.removeItem('cumes.editor.v1');localStorage.removeItem('cumes.input.v1');
       localStorage.removeItem(stageSyncStorageKey);
       if(asymmetricPreset||uploadedPreset)localStorage.removeItem(editorStorageKey);
@@ -621,7 +665,7 @@
           localStorage.removeItem(uploadStorageKey+'.editor');
           next.searchParams.set('preset','upload');
         }
-        navigating=true;location.assign(next.href);
+        selectEditorTab('boundary');navigating=true;location.assign(next.href);
       }catch(error){status.classList.add('error');status.textContent='Could not load '+file.name+': '+error.message}
       finally{event.target.value='';inputLoading=false;if(!navigating){
         const busy=document.body.classList.contains('busy');value('input-upload-button').disabled=busy;value('input-upload').disabled=busy;
@@ -720,7 +764,7 @@
           const tolerances=stages.ftol_array,same=tolerances.every(v=>v===tolerances[0]);
           value('editor-precision-tolerance').textContent=`${same?'Tolerance':'Final tolerance'}: ${tolerances.at(-1).toExponential()}`;
           window.cumesResidualPlot?.setTolerance(tolerances[0]);
-        });
+        },()=>selectEditorTab('stages',value('editor-panel-stages').hidden));
       stageEditor.refresh(advancedEditor?readSurfaceInput():shape.stages);
     }
     let w7xGridInput;
@@ -801,7 +845,7 @@
     }
     for(const id of ['coil-equilibrium','coil-currents','coil-grid'])value(id).addEventListener('input',invalidateResult);
     value('coil-equilibrium').addEventListener('input',()=>{shape.contour=null;saveContourState();
-      try{stageEditor?.refresh(readSurfaceInput())}catch(_){}});
+      try{stageEditor?.refresh(readSurfaceInput(),false)}catch(_){}});
     const editorReady=prepareEditor();
     function versionedAsset(path,prefix){
       const runtime=document.getElementById('cumes-runtime').content.querySelector('script');
